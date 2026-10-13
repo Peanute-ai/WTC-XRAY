@@ -1,0 +1,33 @@
+# Local IDE state and build output
+.vs/
+.vscode/
+**/build/
+**/x64/
+**/Debug/
+**/Release/
+*.user
+*.suo
+*.VC.db
+*.VC.db-shm
+*.VC.db-wal
+*.ipch
+*.obj
+*.pch
+*.pdb
+*.ilk
+*.exe
+*.dll
+*.lib
+*.log
+
+# External SDK: obtain separately; do not commit vendor files
+/WTC/lib/dma/*
+!/WTC/lib/dma/README.md
+
+# Local runtime data
+wtc_menu.cfg
+wtc_menu.cfg.tmp
+cheat_config.cfg
+imgui.ini
+mmap.txt
+offsets.txt
