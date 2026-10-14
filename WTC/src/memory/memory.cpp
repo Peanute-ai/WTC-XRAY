@@ -459,12 +459,10 @@ uintptr_t c_memory::GetImportTableAddress(std::string import, std::string proces
 	return addr;
 }
 
-uint64_t cbSize = 0x80000;
-//callback for VfsFileListU
 VOID cbAddFile(_Inout_ HANDLE h, _In_ LPSTR uszName, _In_ ULONG64 cb, _In_opt_ PVMMDLL_VFS_FILELIST_EXINFO pExInfo)
 {
-	if (strcmp(uszName, "dtb.txt") == 0)
-		cbSize = cb;
+	if (h && uszName && strcmp(uszName, "dtb.txt") == 0)
+		*static_cast<ULONG64*>(h) = cb;
 }
 
 struct Info
@@ -503,26 +501,26 @@ bool c_memory::FixCr3()
 		std::this_thread::sleep_for(std::chrono::milliseconds(100));
 	}
 
-	VMMDLL_VFS_FILELIST2 VfsFileList;
+	ULONG64 file_size = 0;
+	VMMDLL_VFS_FILELIST2 VfsFileList{};
 	VfsFileList.dwVersion = VMMDLL_VFS_FILELIST_VERSION;
-	VfsFileList.h = 0;
-	VfsFileList.pfnAddDirectory = 0;
-	VfsFileList.pfnAddFile = cbAddFile; //dumb af callback who made this system
+	VfsFileList.h = &file_size;
+	VfsFileList.pfnAddDirectory = nullptr;
+	VfsFileList.pfnAddFile = cbAddFile;
 
 	result = VMMDLL_VfsListU(this->vHandle, (LPSTR)"\\misc\\procinfo\\", &VfsFileList);
-	if (!result)
+	if (!result || file_size == 0 || file_size > 16ull * 1024ull * 1024ull)
 		return false;
 
-	//read the data from the txt and parse it
-	const size_t buffer_size = cbSize;
-	std::unique_ptr<BYTE[]> bytes(new BYTE[buffer_size]);
+	const DWORD buffer_size = static_cast<DWORD>(file_size);
+	std::vector<BYTE> bytes(buffer_size);
 	DWORD j = 0;
-	auto nt = VMMDLL_VfsReadW(this->vHandle, (LPWSTR)L"\\misc\\procinfo\\dtb.txt", bytes.get(), buffer_size - 1, &j, 0);
-	if (nt != VMMDLL_STATUS_SUCCESS)
+	auto nt = VMMDLL_VfsReadW(this->vHandle, (LPWSTR)L"\\misc\\procinfo\\dtb.txt", bytes.data(), buffer_size, &j, 0);
+	if (nt != VMMDLL_STATUS_SUCCESS || j == 0 || j > buffer_size)
 		return false;
 
 	std::vector<uint64_t> possible_dtbs;
-	std::string lines(reinterpret_cast<char*>(bytes.get()));
+	std::string lines(reinterpret_cast<const char*>(bytes.data()), static_cast<size_t>(j));
 	std::istringstream iss(lines);
 	std::string line;
 
@@ -815,11 +813,10 @@ bool c_memory::ClearScatterHandle(VMMDLL_SCATTER_HANDLE handle)
 
 bool c_memory::AddScatterReadRequest(VMMDLL_SCATTER_HANDLE handle, uint64_t address, void* buffer, size_t size)
 {
-	if ( !handle || !is_valid_user_address( static_cast<uintptr_t>( address ) ) || !buffer || size == 0 )
+	if (!handle || !is_valid_user_address(static_cast<uintptr_t>(address)) || !buffer || size == 0 || size > static_cast<size_t>(MAXDWORD))
 		return false;
 
-	DWORD memoryPrepared = 0;
-	return VMMDLL_Scatter_PrepareEx( handle, address, size, ( PBYTE )buffer, &memoryPrepared ) != 0;
+	return VMMDLL_Scatter_PrepareEx(handle, address, static_cast<DWORD>(size), static_cast<PBYTE>(buffer), nullptr) != 0;
 }
 
 bool c_memory::AddScatterWriteRequest(VMMDLL_SCATTER_HANDLE handle, uint64_t address, void* buffer, size_t size)

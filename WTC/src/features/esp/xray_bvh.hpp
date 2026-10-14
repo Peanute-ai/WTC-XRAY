@@ -37,25 +37,28 @@ namespace xray
     // ========================================================================
     inline uint32_t dm_read_u32(const uint8_t* buf, size_t size, size_t off)
     {
-        if (off + 4 > size) return 0;
+        if (!buf || off > size || size - off < sizeof(uint32_t))
+            return 0;
         uint32_t v = 0;
-        std::memcpy(&v, buf + off, 4);
+        std::memcpy(&v, buf + off, sizeof(v));
         return v;
     }
 
     inline float dm_read_f32(const uint8_t* buf, size_t size, size_t off)
     {
-        if (off + 4 > size) return 0.0f;
+        if (!buf || off > size || size - off < sizeof(float))
+            return 0.0f;
         float v = 0.0f;
-        std::memcpy(&v, buf + off, 4);
+        std::memcpy(&v, buf + off, sizeof(v));
         return v;
     }
 
     inline uint64_t dm_read_u64(const uint8_t* buf, size_t size, size_t off)
     {
-        if (off + 8 > size) return 0;
+        if (!buf || off > size || size - off < sizeof(uint64_t))
+            return 0;
         uint64_t v = 0;
-        std::memcpy(&v, buf + off, 8);
+        std::memcpy(&v, buf + off, sizeof(v));
         return v;
     }
 
@@ -302,14 +305,12 @@ namespace xray
         const float scale_y = scale_raw_y * k_quant_factor;
         const float scale_z = scale_raw_z * k_quant_factor;
 
-        const uint32_t aligned_pad = (tree_bytes + 7u) & ~7u;
-
-        // --- buffer completo del item ---
-        const size_t verts_bytes_size = static_cast<size_t>(vert_count) * 8u;
-        const size_t total_item_size = 0x30u + aligned_pad + verts_bytes_size;
-
-        if (total_item_size > (32u << 20))
+        const uint64_t aligned_pad_wide = (static_cast<uint64_t>(tree_bytes) + 7ull) & ~7ull;
+        const uint64_t total_item_size_wide = 0x30ull + aligned_pad_wide + static_cast<uint64_t>(vert_count) * 8ull;
+        if (total_item_size_wide > (32ull << 20))
             return false;
+        const uint32_t aligned_pad = static_cast<uint32_t>(aligned_pad_wide);
+        const size_t total_item_size = static_cast<size_t>(total_item_size_wide);
 
         std::vector<uint8_t> item_buf(total_item_size, 0);
         if (!TargetProcess->Read(pool_base + data_offset, item_buf.data(), total_item_size))

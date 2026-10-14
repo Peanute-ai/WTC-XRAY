@@ -6,7 +6,6 @@
 #include <cstdint>
 #include <unordered_map>
 #include "radar_icons.hpp"
-#include "radar_game_font.hpp"
 
 // Este encabezado se incluye desde esp.hpp después de los tipos del SDK y de ImGui.
 namespace esp::radar
@@ -178,8 +177,7 @@ namespace esp::radar
             const ImVec2 point(map.screen_min.x + width * x,
                 map.screen_min.y + height * y);
             const icons::kind symbol = icons::classify_unit(unit_base, image);
-            if (!game_font::draw(list, point, symbol, enemy_color))
-                icons::draw(list, point, symbol, enemy_color);
+            icons::draw(list, point, symbol, enemy_color);
         }
         list->PopClipRect();
     }

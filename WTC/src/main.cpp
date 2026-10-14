@@ -1424,9 +1424,6 @@ int main(int, char**)
             CreateRenderTarget();
         }
 
-        // Atlas opcional del radar: siempre fuera de NewFrame/Render.
-        // Si el DMA todavía no está listo, se reintenta con rate-limit.
-        esp::radar::game_font::prepare_before_frame();
         ImGui_ImplDX11_NewFrame();
         ImGui_ImplWin32_NewFrame();
         ImGui::NewFrame();

@@ -35,6 +35,7 @@ El ejecutable se genera en `WTC/build/x64/Release/` y los archivos intermedios e
 - La configuración se guarda en `%LOCALAPPDATA%\WTC\wtc_menu.cfg`, con alternativa junto al ejecutable si no se puede resolver la carpeta de usuario. No se incluyen perfiles personales.
 - Los offsets predeterminados están en [el código](WTC/src/game/offsets.hpp). El menú permite crear `offsets.txt` junto al ejecutable y activar su lectura. No se distribuye la copia antigua de la carpeta de fuentes; actualiza los valores cuando corresponda.
 - El renderizador usa Arial Bold instalada en `C:\Windows\Fonts\arialbd.ttf`. No se redistribuye esa fuente. La ubicación está fijada en el código; una instalación de Windows en otra ruta requiere adaptar [el renderizador](WTC/src/utils/render/render.cpp).
+- El radar utiliza sus iconos vectoriales; no extrae ni procesa fuentes desde la memoria del juego. La apariencia puede diferir de los glifos originales.
 - Se conservan mensajes operativos de consola y la generación/reutilización de un mapa de memoria temporal usado por la inicialización DMA. No son logs ni archivos de prueba incluidos en el paquete. No se garantiza ausencia de diagnósticos internos de bibliotecas externas.
 
 ## Estructura
@@ -62,7 +63,9 @@ La distribución excluye pruebas, cachés del IDE, compilados, registros de comp
 
 ## Validación de esta distribución
 
-Se realizó una recompilación completa **Release | x64** en una copia aislada, con MSBuild 18.10.1, MSVC 14.51.36231 (v145), las dependencias de desarrollo originales y sin las hojas de propiedades del usuario: **0 errores, 88 advertencias**. Estas incluyen extensiones de los headers DMA, conversiones numéricas y formatos de `printf` del código conservado; no se han ocultado ni corregido dentro de esta limpieza.
+Se realizó una recompilación completa **Release | x64** en una copia aislada, con MSBuild 18.10.1, MSVC 14.51.36231 (v145), las dependencias de desarrollo originales y sin las hojas de propiedades del usuario: **0 errores, 86 advertencias**, tras las correcciones de memoria. Las advertencias restantes incluyen extensiones de los headers DMA, conversiones numéricas y formatos de `printf` del código conservado; no se han ocultado.
+
+Las correcciones de Scatter, límites de X-ray y lectura de texto VFS superaron 73 comprobaciones focalizadas con AddressSanitizer y APIs simuladas. Se probaron fragmentos extraídos del código real, sin ejecutar la aplicación ni acceder a hardware; no es una prueba de integración con el SDK ni una certificación de seguridad total.
 
 Las dependencias usadas para esa comprobación no se incluyen en el paquete público. No se ha probado descargar y reconstruir el SDK desde sus fuentes, ni ejecutar el programa con hardware o con una versión actual del juego. Esta validación no es una auditoría funcional o de seguridad completa.
 
