@@ -1,6 +1,6 @@
 # Wallet Takes Control (WTC) — v4.1
 
-Versión **4.1 — Only Air-to-Air Missiles**.
+Versión **4.1 —Air-to-Air Missiles**.
 
 Proyecto C++ para Windows con interfaz Win32/Direct3D 11 y Dear ImGui. Esta distribución contiene fuentes y documentación de compilación, no un programa listo para ejecutar.
 
