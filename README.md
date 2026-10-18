@@ -93,16 +93,6 @@ ECS EXPERIMENTAL kind=rocket BASE=0x... RVA=0x... selector=N record=0x... sublis
 
 `stage` indica en qué punto se detuvo la lectura (`none`, `address`, `read`, `selector`, `layout`, `descriptor`, `budget`, `changed`, `skipped`). `skipped` es la línea de bombas cuando el filtro evita recorrerlas. `local` indica si se pudo leer tu identificador, `uid` cuál es y `filtered` cuántos candidatos descartó el filtro en la última muestra; por candidato, `first` incluye `locked=`, `tracking=` y `target=` para verificar el lock. `ms` es lo que tardó la última muestra y `reads` cuántas lecturas DMA hizo; `truncated` avisa de que se alcanzaron los 499 candidatos y quedaron filas sin visitar. `req`, `opt`, `sub`, `o0`, `o1`, `head` y `desc` muestran cómo se interpretó la cabecera del registro, los desplazamientos de componente y los bytes reales del registro y del primer descriptor. El decodificador revalida el selector, el registro (solo los 56 bytes que realmente consume), las tablas externas y cada descriptor antes de aceptar resultados, y revierte las filas asociadas si detecta cambios durante la lectura.
 
-### Pruebas
-
-La suite incluida es [ground_prediction_tests.cpp](WTC/tests/ground_prediction_tests.cpp), ejecutada con [run.ps1](WTC/tests/run.ps1). Requiere las herramientas C++ de Visual Studio, pero no el SDK DMA ni el juego.
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File WTC/tests/run.ps1
-```
-
-Las suites experimentales ECS y de render citadas en versiones anteriores no se incluyen en esta distribución.
-
 ## Ejecutar y configurar
 
 - Copia las DLL y demás dependencias de ejecución indicadas en [la guía DMA](WTC/lib/dma/README.md) junto al ejecutable.
@@ -121,9 +111,6 @@ LICENSE
 README.md
 .gitignore
 WTC/
-  tests/
-    run.ps1
-    ground_prediction_tests.cpp
   sdk.sln
   sdk.vcxproj
   src/
@@ -138,11 +125,11 @@ WTC/
     dma/        Instrucciones para instalar el SDK externo
 ```
 
-La distribución excluye el SDK DMA de terceros, cachés del IDE, compilados, registros de compilación, preferencias personales, ejemplos de ImGui, diagnósticos de matrices X-ray y la carpeta de trabajo antigua de pruebas. Sí se incluye la carpeta `WTC/tests/`, que sólo contiene fuentes portables y el script de ejecución: no requiere el SDK ni el juego.
+La distribución excluye el SDK DMA de terceros, cachés del IDE, compilados, registros de compilación, preferencias personales, ejemplos de ImGui, diagnósticos de matrices X-ray y la carpeta de trabajo antigua de pruebas. Las pruebas de desarrollo y sus scripts de ejecución no se incluyen en esta distribución.
 
 ## Validación de esta distribución
 
-Para esta publicación v4.1 se ejecutó la suite incluida: **302 comprobaciones aprobadas**. Esta prueba no ejecuta el juego ni accede a hardware.
+Para esta publicación v4.1 se ejecutó localmente una suite de desarrollo (no incluida): **302 comprobaciones aprobadas**. Esta prueba no ejecuta el juego ni accede a hardware.
 
 No se realizó una recompilación completa de la aplicación para esta publicación ni se verificó su funcionamiento en juego o con hardware DMA. Los resultados de compilaciones y suites de versiones anteriores no constituyen validación de esta entrega.
 
