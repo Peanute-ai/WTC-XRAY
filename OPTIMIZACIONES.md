@@ -12,19 +12,13 @@
 ## Verificación
 
 - Compilación Release x64 con MSVC v145; registro en [optimization-build.log](WTC/build/optimization-build.log).
-- [302 comprobaciones nativas](WTC/tests/ground_prediction_tests.cpp): frenadas, signo de giro, simetría, desfase temporal, datos inválidos, alcance, traslación a coordenadas grandes y límite de trabajo.
+- 302 comprobaciones nativas ejecutadas localmente: frenadas, signo de giro, simetría, desfase temporal, datos inválidos, alcance, traslación a coordenadas grandes y límite de trabajo.
 - Comparación contra integración RK4 independiente de paso ≤1 ms: peor desviación observada **0,1673 m** en los casos aceptados del conjunto probado. Esto verifica coherencia numérica del modelo, no precisión real en el juego.
 - Barrido adicional: 33 casos aceptados y 3 rechazados dentro del presupuesto; máximo observado 1.350 pasos por cálculo.
 - Microbenchmark de 10.000 solves: aproximadamente **6,8 µs por solve** en esta máquina, sin DMA ni render. No es una medida de FPS ni una comparación de rendimiento en partida.
 - Revisión de equivalencia de los cambios de misiles y compactación X-ray; compilación nativa de su integración.
 
-Ejecutar pruebas desde la raíz:
-
-~~~powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./WTC/tests/run.ps1
-~~~
-
-El permiso de ejecución afecta solo a ese proceso; el script no cambia la política global.
+Las pruebas de desarrollo y sus scripts no se distribuyen en este repositorio.
 
 ## Límites y comprobación en partida
 
