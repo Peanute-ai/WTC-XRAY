@@ -72,6 +72,7 @@ namespace esp
     {
         std::string unit_type;
         std::string vehicle_name;
+        uint16_t raw_type = 0;
         std::chrono::steady_clock::time_point next_refresh{};
         std::chrono::steady_clock::time_point last_seen{};
     };
@@ -195,6 +196,8 @@ namespace esp
             auto info = unit.getInfo();
             entry.unit_type = info.getUnitType();
             entry.vehicle_name = info.getVehicleName();
+            entry.raw_type = TargetProcess->Read<uint16_t>(
+                unit_base + offsets::unit_offsets::unitType_offset);
             entry.next_refresh = now + std::chrono::milliseconds(1500);
         }
         entry.last_seen = now;
@@ -727,7 +730,6 @@ namespace esp
         return vec3_t{ vx, vy, vz };
     }
 
-    // Bind pose estática (m_TransformArray, stride 0x30, 3x4 col-major)
     inline bool read_part_transform(uintptr_t matrix_array_base, uint16_t transform_index, part_xform_t& out)
     {
         out.valid = false;
@@ -745,23 +747,6 @@ namespace esp
     // ========================================================================
     // [SECCIÓN 7c] X-RAY — SKELETON TREE (animado)
     // ========================================================================
-    // El skeleton tree (GeomNodeTree) usa matrices 4x4 col-major, stride 0x40.
-    // El WTM está en el primer bloque del allocation packed (m_PackedBase).
-    //
-    //   dm_root    = Read(unit + 0x10A8)             // damage model
-    //   valid_flag = Read<u8>(dm_root + 0x78)        // m_ValidFlag
-    //   tree       = Read(unit + 0x258)              // m_ModelTransform
-    //   packed     = Read(tree + 0x20)               // m_PackedBase
-    //   count      = Read<u16>(tree + 0x10)          // m_NodeCount
-    //   matrix     = Read(packed + tree_index * 0x40)
-    //
-    // El tree_index viene del record (offset 0x04, m_TreeIndex, u16).
-    //
-    // IMPORTANTE: el contexto del unit (dm/tree/packed/count) se lee UNA vez
-    // por unit/frame (ver read_unit_skeleton_ctx) y se pasa a read_animated_matrix
-    // para evitar 5-6 reads DMA POR PART POR FRAME.
-    // ========================================================================
-
     struct unit_skeleton_ctx_t
     {
         uintptr_t dm = 0;
@@ -819,8 +804,6 @@ namespace esp
     // ========================================================================
     // [SECCIÓN 7d] CLASIFICACIÓN CACHEADA DE PARTS
     // ========================================================================
-    // La clasificación vive en xray_parts.hpp y se guarda en XrayPart durante
-    // el refresh del decoder: ningún find() ni mapa adicional por frame.
     using xray_part_kind_t = xray::xray_part_kind_t;
 
     // ========================================================================
@@ -838,7 +821,7 @@ namespace esp
     {
         if (!draw_list) return;
 
-        for (auto& [color, batch] : batches)
+        for (auto& [kind, batch] : batches)
         {
             const int vtx_count = static_cast<int>(batch.verts.size());
             const int idx_count = static_cast<int>(batch.indices.size());
@@ -859,6 +842,78 @@ namespace esp
         }
     }
 
+    // ------------------------------------------------------------------------
+    // [SECCIÓN 8a] Proyección de un part a buffers reutilizables.
+    // NO proyecta para dibujar: solo llena out_projected / out_visible.
+    // ------------------------------------------------------------------------
+    inline size_t project_part_vertices_to(
+        const xray::XrayPart& part,
+        const part_xform_t* part_transform,
+        const rotation_matrix_t& unit_rot,
+        const vec3_t& unit_pos,
+        const ViewMatrix_t& camera_matrix,
+        const projection_context_t& proj_ctx,
+        uint32_t& w2s_counter,
+        std::vector<vec2_t>& out_projected,
+        std::vector<uint8_t>& out_visible)
+    {
+        const size_t n = part.vertices.size();
+        out_projected.resize(n);
+        out_visible.assign(n, 0);
+
+        size_t visible_count = 0;
+        for (size_t i = 0; i < n; ++i)
+        {
+            const vec3_t v_local = bvh_vertex_to_local_game(part.vertices[i], part_transform);
+            const vec3_t p_world = unit_rot.transform(v_local) + unit_pos;
+            if (world_to_screen_counted(p_world, out_projected[i], camera_matrix, proj_ctx, w2s_counter))
+            {
+                out_visible[i] = 1;
+                ++visible_count;
+            }
+        }
+        return visible_count;
+    }
+
+    // ------------------------------------------------------------------------
+    // [SECCIÓN 8b] Dibujo de wireframe desde buffers ya proyectados.
+    // Reutiliza el resultado de project_part_vertices_to sin re-proyectar.
+    // ------------------------------------------------------------------------
+    inline void draw_lines_from_projected(
+        const std::vector<uint32_t>& indices,
+        const std::vector<vec2_t>& projected,
+        const std::vector<uint8_t>& visible,
+        ImDrawList* draw_list,
+        ImU32 color,
+        float thickness)
+    {
+        if (!draw_list) return;
+        const size_t n = projected.size();
+        if (n == 0) return;
+
+        const size_t tri_count = indices.size() / 3;
+        for (size_t t = 0; t < tri_count; ++t)
+        {
+            const uint32_t ia = indices[t * 3 + 0];
+            const uint32_t ib = indices[t * 3 + 1];
+            const uint32_t ic = indices[t * 3 + 2];
+            if (ia >= n || ib >= n || ic >= n) continue;
+            if (!visible[ia] || !visible[ib] || !visible[ic]) continue;
+
+            const ImVec2 a(projected[ia].x, projected[ia].y);
+            const ImVec2 b(projected[ib].x, projected[ib].y);
+            const ImVec2 c(projected[ic].x, projected[ic].y);
+
+            draw_list->AddLine(a, b, color, thickness);
+            draw_list->AddLine(b, c, color, thickness);
+            draw_list->AddLine(c, a, color, thickness);
+        }
+    }
+
+    // ------------------------------------------------------------------------
+    // [SECCIÓN 8c] Wrapper wireframe puro (solo para xray_render_mode == 0).
+    // Usa buffers thread_local internos.
+    // ------------------------------------------------------------------------
     inline void draw_module_lines_world(
         const xray::XrayPart& part,
         const part_xform_t* part_transform,
@@ -874,37 +929,19 @@ namespace esp
         if (!draw_list) draw_list = ImGui::GetForegroundDrawList();
         if (!draw_list) return;
 
-        const size_t n = part.vertices.size();
-        std::vector<vec2_t> projected(n);
-        std::vector<uint8_t> visible(n, 0);
+        thread_local std::vector<vec2_t>  s_wire_projected;
+        thread_local std::vector<uint8_t> s_wire_visible;
 
-        for (size_t i = 0; i < n; ++i)
-        {
-            const vec3_t v_local = bvh_vertex_to_local_game(part.vertices[i], part_transform);
-            const vec3_t p_world = unit_rot.transform(v_local) + unit_pos;
-            if (world_to_screen_counted(p_world, projected[i], camera_matrix, proj_ctx, w2s_counter))
-                visible[i] = 1;
-        }
+        project_part_vertices_to(part, part_transform, unit_rot, unit_pos,
+            camera_matrix, proj_ctx, w2s_counter, s_wire_projected, s_wire_visible);
 
-        const size_t tri_count = part.indices.size() / 3;
-        for (size_t t = 0; t < tri_count; ++t)
-        {
-            const uint32_t ia = part.indices[t * 3 + 0];
-            const uint32_t ib = part.indices[t * 3 + 1];
-            const uint32_t ic = part.indices[t * 3 + 2];
-            if (ia >= n || ib >= n || ic >= n) continue;
-            if (!visible[ia] || !visible[ib] || !visible[ic]) continue;
-
-            const ImVec2 a(projected[ia].x, projected[ia].y);
-            const ImVec2 b(projected[ib].x, projected[ib].y);
-            const ImVec2 c(projected[ic].x, projected[ic].y);
-
-            draw_list->AddLine(a, b, color, thickness);
-            draw_list->AddLine(b, c, color, thickness);
-            draw_list->AddLine(c, a, color, thickness);
-        }
+        draw_lines_from_projected(part.indices, s_wire_projected, s_wire_visible,
+            draw_list, color, thickness);
     }
 
+    // ------------------------------------------------------------------------
+    // [SECCIÓN 8d] Draw X-Ray modules (con todas las optimizaciones).
+    // ------------------------------------------------------------------------
     inline void draw_xray_modules(
         c_unit& unit,
         const vec3_t& unit_pos,
@@ -938,12 +975,28 @@ namespace esp
         const float vp_h = vp ? vp->Size.y : 1080.0f;
         const float vp_margin = 200.0f;
 
-        FillBatchMap fill_batches;
-        fill_batches.reserve(8);
+        // Key by module kind (at most seven), NOT animated color/alpha.
+        // unordered_map::clear destroys nested vectors; clear their sizes instead.
+        // Retain geometry capacity without accumulating keys as distance/colors change.
+        thread_local FillBatchMap fill_batches;
+        for (auto& entry : fill_batches) {
+            entry.second.verts.clear();
+            entry.second.indices.clear();
+        }
 
-        // Buffers reusables por thread/frame
+        // Buffers reusables por thread para el pase de proyección.
         thread_local std::vector<vec2_t>  s_projected;
         thread_local std::vector<uint8_t> s_visible;
+
+        // Cache de transforms por índice dentro de la unit/frame.
+        // - animated_cache por tree_index (skeleton tree)
+        // - bind_cache por transform_index (m_TransformArray)
+        // Referencias estables: unordered_map garantiza no invalidar
+        // punteros a valores en inserts posteriores.
+        thread_local std::unordered_map<uint16_t, part_xform_t> s_animated_cache;
+        thread_local std::unordered_map<uint16_t, part_xform_t> s_bind_cache;
+        s_animated_cache.clear();
+        s_bind_cache.clear();
 
         for (const auto& part : cache.parts)
         {
@@ -997,14 +1050,37 @@ namespace esp
                 continue;
 
             // ---- Transform: skeleton tree primero, bind pose de fallback ----
-            part_xform_t part_transform{};
-            bool has_transform = false;
+            // Cacheado por índice dentro de este draw. Múltiples parts con el
+            // mismo transform_index NO repiten lectura DMA.
+            const part_xform_t* p_transform = nullptr;
 
-            has_transform = read_animated_matrix(skel, part.tree_index, part_transform);
-            if (!has_transform)
-                has_transform = read_part_transform(cache.matrix_array_base, part.transform_index, part_transform);
+            // animated
+            if (skel.animated_ok && part.tree_index != 0xFFFF)
+            {
+                auto it = s_animated_cache.find(part.tree_index);
+                if (it == s_animated_cache.end())
+                {
+                    part_xform_t tmp{};
+                    if (read_animated_matrix(skel, part.tree_index, tmp))
+                        it = s_animated_cache.emplace(part.tree_index, tmp).first;
+                }
+                if (it != s_animated_cache.end())
+                    p_transform = &it->second;
+            }
 
-            const part_xform_t* p_transform = has_transform ? &part_transform : nullptr;
+            // bind pose fallback
+            if (!p_transform)
+            {
+                auto it = s_bind_cache.find(part.transform_index);
+                if (it == s_bind_cache.end())
+                {
+                    part_xform_t tmp{};
+                    if (read_part_transform(cache.matrix_array_base, part.transform_index, tmp))
+                        it = s_bind_cache.emplace(part.transform_index, tmp).first;
+                }
+                if (it != s_bind_cache.end())
+                    p_transform = &it->second;
+            }
 
             // ---- Alpha ----
             if (sdk::xray_module_alpha < 1.0f)
@@ -1024,6 +1100,11 @@ namespace esp
                 color = (color & 0x00FFFFFF) | (alpha << 24);
             }
 
+            // ================================================================
+            // MODO WIREFRAME PURO (0)
+            //   Proyecta una sola vez con buffers thread_local y dibuja líneas.
+            //   No pasa por fill batching.
+            // ================================================================
             if (sdk::xray_render_mode == 0)
             {
                 draw_module_lines_world(part, p_transform, unit_rot, unit_pos,
@@ -1031,42 +1112,41 @@ namespace esp
                 continue;
             }
 
+            // ================================================================
+            // MODO FILL (1/2) — un único pase de proyección
+            // ================================================================
             const size_t n = part.vertices.size();
-            s_projected.resize(n);
-            s_visible.assign(n, 0);
+            const size_t visible_count = project_part_vertices_to(
+                part, p_transform, unit_rot, unit_pos,
+                camera_matrix, proj_ctx, w2s_counter,
+                s_projected, s_visible);
 
-            // ---- Primer pase: proyectar + bounding 2D para cull rápido ----
+            if (visible_count == 0)
+                continue;
+
+            // ---- Bounding 2D para cull rápido ----
             float bmin_x = std::numeric_limits<float>::max();
             float bmin_y = std::numeric_limits<float>::max();
             float bmax_x = std::numeric_limits<float>::lowest();
             float bmax_y = std::numeric_limits<float>::lowest();
-            size_t visible_count = 0;
 
             for (size_t i = 0; i < n; ++i)
             {
-                const vec3_t v_local = bvh_vertex_to_local_game(part.vertices[i], p_transform);
-                const vec3_t p_world = unit_rot.transform(v_local) + unit_pos;
-                if (world_to_screen_counted(p_world, s_projected[i], camera_matrix, proj_ctx, w2s_counter))
-                {
-                    s_visible[i] = 1;
-                    ++visible_count;
-
-                    if (s_projected[i].x < bmin_x) bmin_x = s_projected[i].x;
-                    if (s_projected[i].y < bmin_y) bmin_y = s_projected[i].y;
-                    if (s_projected[i].x > bmax_x) bmax_x = s_projected[i].x;
-                    if (s_projected[i].y > bmax_y) bmax_y = s_projected[i].y;
-                }
+                if (!s_visible[i]) continue;
+                if (s_projected[i].x < bmin_x) bmin_x = s_projected[i].x;
+                if (s_projected[i].y < bmin_y) bmin_y = s_projected[i].y;
+                if (s_projected[i].x > bmax_x) bmax_x = s_projected[i].x;
+                if (s_projected[i].y > bmax_y) bmax_y = s_projected[i].y;
             }
 
-            // Cull: bounding 2D totalmente fuera de pantalla → skip
-            if (visible_count == 0 ||
-                bmax_x < -vp_margin || bmax_y < -vp_margin ||
+            if (bmax_x < -vp_margin || bmax_y < -vp_margin ||
                 bmin_x > vp_w + vp_margin || bmin_y > vp_h + vp_margin)
             {
                 continue;
             }
 
-            auto& batch = fill_batches[color];
+            // ---- Fill batch ----
+            auto& batch = fill_batches[static_cast<ImU32>(kind)];
             batch.verts.reserve(batch.verts.size() + n);
             batch.indices.reserve(batch.indices.size() + part.indices.size());
 
@@ -1094,11 +1174,16 @@ namespace esp
                 batch.indices.push_back(base + 2);
             }
 
+            // ================================================================
+            // WIREFRAME OVERLAY — reusa s_projected / s_visible del pase fill.
+            // Antes se volvía a proyectar el part entero; ahora solo se
+            // dibujan las líneas con datos ya calculados.
+            // ================================================================
             if (sdk::xray_wireframe_overlay)
             {
                 const float overlay_thickness = std::max(0.5f, sdk::xray_line_thickness * 0.7f);
-                draw_module_lines_world(part, p_transform, unit_rot, unit_pos,
-                    camera_matrix, proj_ctx, w2s_counter, color, overlay_thickness);
+                draw_lines_from_projected(part.indices, s_projected, s_visible,
+                    draw_list, color, overlay_thickness);
             }
 
             if (sdk::bShowModuleNames && distance_f <= sdk::xray_names_distance && !part.vertices.empty())
@@ -1194,8 +1279,6 @@ namespace esp
             }
         }
 
-        // Independiente del culling de cámara/distancia del ESP: el mapa muestra
-        // todas las posiciones enemigas válidas del snapshot actual.
         radar::draw(curr_snapshot.positions);
 
         thread_local std::vector<c_unit> units;
@@ -1229,7 +1312,13 @@ namespace esp
 
         bool is_scoping = false;
         {
-            uint8_t scoping_byte = TargetProcess->Read<uint8_t>(offsets::is_scoping_offset);
+            const uintptr_t module_base = runtime::base_address();
+            uint8_t scoping_byte = 0;
+            if (module_base >= 0x10000 && module_base < 0x7FFFFFFFFFFF &&
+                offsets::is_scoping_offset < 0x7FFFFFFFFFFF - module_base)
+            {
+                TargetProcess->Read(module_base + offsets::is_scoping_offset, &scoping_byte, sizeof(scoping_byte));
+            }
             is_scoping = (scoping_byte != 0);
         }
 
@@ -1311,146 +1400,161 @@ namespace esp
             bool have_motion = false;
             std::chrono::steady_clock::time_point last_sample{};
             std::chrono::steady_clock::time_point last_update{};
+            std::chrono::steady_clock::time_point next_sample{};
             std::chrono::steady_clock::time_point last_smooth{};
+            vec3_t solve_origin{};
+            air_lead_model::TurnState turn_state{};
+            float turn_omega = 0.0f;
         };
         static std::unordered_map<uintptr_t, AirLeadCacheEntry> air_lead_cache;
 
         auto run_air_lead = [&](c_unit& unit, const vec3_t& unit_pos) {
             const uintptr_t unit_base = unit.get_base();
             const auto now = std::chrono::steady_clock::now();
-            vec3_t air_velocity{ 0.0f, 0.0f, 0.0f };
-            vec3_t air_acceleration{ 0.0f, 0.0f, 0.0f };
-            bool velocity_from_native = false;
-            bool acceleration_from_native = false;
-
-            vec3_t origin = camera_pos;
-            if (sdk::air_lead_use_weapon_position && local_unit_base) {
-                vec3_t weapon_local;
-                if (aimbot::GetLocalWeaponLocalPosition(weapon_local)) {
-                    if (has_local_rot) {
-                        origin = frame.local_pos + local_rot.transform(weapon_local);
-                    }
-                    else {
-                        origin = frame.local_pos + weapon_local;
-                    }
-                }
-            }
-
-            uintptr_t air_container = get_air_container(unit_base, now);
-            if (air_container) {
-                vec3d_t vel_d{};
-                const bool velocity_read = TargetProcess->Read(
-                    air_container + offsets::unit_offsets::airmovement_offsets::velocity_offset,
-                    &vel_d, sizeof(vel_d));
-                vec3_t raw_vel = { static_cast<float>(vel_d.x), static_cast<float>(vel_d.y), static_cast<float>(vel_d.z) };
-                if (velocity_read && std::isfinite(raw_vel.x) && std::isfinite(raw_vel.y) && std::isfinite(raw_vel.z) &&
-                    raw_vel.length() < 950.0f) {
-                    air_velocity = raw_vel;
-                    velocity_from_native = true;
-                }
-
-                vec3d_t acc_d{};
-                const bool acceleration_read = TargetProcess->Read(
-                    air_container + offsets::unit_offsets::airmovement_offsets::acceleration_offset,
-                    &acc_d, sizeof(acc_d));
-                vec3_t raw_acc = { static_cast<float>(acc_d.x), static_cast<float>(acc_d.y), static_cast<float>(acc_d.z) };
-                if (acceleration_read && std::isfinite(raw_acc.x) && std::isfinite(raw_acc.y) && std::isfinite(raw_acc.z) &&
-                    raw_acc.length() < 160.0f) {
-                    air_acceleration = raw_acc;
-                    acceleration_from_native = true;
-                }
-            }
-
             auto& cache = air_lead_cache[unit_base];
-            if (cache.have_position && now - cache.last_sample > std::chrono::milliseconds(700))
-                cache = AirLeadCacheEntry{}; // dirección reciclada / unidad desaparecida
-            if (cache.last_container && air_container && cache.last_container != air_container)
-                cache = AirLeadCacheEntry{};
-            cache.last_container = air_container;
+            // DMA + filtering + solve share a cadence; rendering stays per-frame.
+            // Failed solutions are throttled too, rather than retried at render FPS.
+            if (now >= cache.next_sample) {
+                cache.next_sample = now + std::chrono::milliseconds(30);
+                vec3_t air_velocity{ 0.0f, 0.0f, 0.0f };
+                vec3_t air_acceleration{ 0.0f, 0.0f, 0.0f };
+                bool velocity_from_native = false;
+                bool acceleration_from_native = false;
 
-            // Sólo una posición DMA realmente distinta es una muestra nueva.
-            // Registrar posiciones incluso con velocidad nativa evita comparar
-            // muestras antiguas si falla después la lectura del contenedor.
-            const auto sample_time = curr_snapshot.captured_at;
-            if (air_lead_model::finite(unit_pos) &&
-                (!cache.have_position || (unit_pos - cache.last_position).length() > 0.04f))
-            {
-                if (cache.have_position)
-                {
-                    const float dt = std::chrono::duration<float>(sample_time - cache.last_sample).count();
-                    if (dt >= 0.025f && dt <= 0.55f)
-                    {
-                        const vec3_t measured = (unit_pos - cache.last_position) / dt;
-                        if (air_lead_model::finite(measured) && measured.length() < 950.0f)
-                        {
-                            const vec3_t previous = cache.measured_velocity;
-                            const bool had_motion = cache.have_motion;
-                            const float alpha_v = 1.0f - std::exp(-dt / 0.18f);
-                            cache.filtered_velocity = had_motion
-                                ? cache.filtered_velocity + (measured - cache.filtered_velocity) * alpha_v : measured;
-                            if (had_motion)
-                            {
-                                const vec3_t derived = (measured - previous) / dt;
-                                if (air_lead_model::finite(derived) && derived.length() < 160.0f)
-                                {
-                                    const float alpha_a = 1.0f - std::exp(-dt / 0.32f);
-                                    cache.filtered_acceleration += (derived - cache.filtered_acceleration) * alpha_a;
-                                }
-                            }
-                            cache.measured_velocity = measured;
-                            cache.have_motion = true;
+                vec3_t origin = camera_pos;
+                if (sdk::air_lead_use_weapon_position && local_unit_base) {
+                    // Weapon-local geometry is shared across all air targets.
+                    static uintptr_t weapon_owner = 0;
+                    static vec3_t weapon_local{};
+                    static bool weapon_valid = false;
+                    static std::chrono::steady_clock::time_point weapon_next{};
+                    if (weapon_owner != local_unit_base || now >= weapon_next) {
+                        weapon_owner = local_unit_base;
+                        weapon_valid = aimbot::GetLocalWeaponLocalPosition(weapon_local);
+                        weapon_next = now + std::chrono::milliseconds(100);
+                    }
+                    if (weapon_valid) {
+                        if (has_local_rot) {
+                            origin = frame.local_pos + local_rot.transform(weapon_local);
+                        }
+                        else {
+                            origin = frame.local_pos + weapon_local;
                         }
                     }
-                    else if (dt > 0.55f)
-                        cache.have_motion = false;
                 }
-                cache.last_position = unit_pos;
-                cache.last_sample = sample_time;
-                cache.have_position = true;
-            }
 
-            // Cero nativo durante vuelo con posición cambiante puede ser DMA
-            // fallido: preferir derivada filtrada a detener el indicador.
-            if (velocity_from_native && air_velocity.length() < 0.5f &&
-                cache.have_motion && cache.filtered_velocity.length() > 10.0f)
-                velocity_from_native = false;
-            if (!velocity_from_native && cache.have_motion)
-                air_velocity = cache.filtered_velocity;
-            if ((!acceleration_from_native ||
-                (air_acceleration.length() < 0.1f && cache.filtered_acceleration.length() > 5.0f)) &&
-                cache.have_motion)
-                air_acceleration = cache.filtered_acceleration;
-            if (!air_lead_model::finite(air_acceleration) || air_acceleration.length() > 160.0f)
-                air_acceleration = {};
-            cache.prediction_velocity = air_velocity;
-            cache.prediction_acceleration = air_acceleration;
-            if (!cache.initialized || now - cache.last_update >= std::chrono::milliseconds(30))
-            {
-                const aimbot::BallisticsData local_bal = aimbot::ballisticsData;
-                const float sample_age = std::clamp(
-                    std::chrono::duration<float>(now - curr_snapshot.captured_at).count(), 0.0f, 0.20f);
-                // Tiempo hasta el disparo entra ANTES de resolver intercepción:
-                // posición, aceleración, gravedad y drag usan el mismo horizonte.
-                const float delay = sample_age + std::clamp(sdk::air_lead_extra_time, 0.0f, 0.5f);
-                const float speed = std::isfinite(local_bal.velocity) && local_bal.velocity > 0.0f
-                    ? local_bal.velocity : 300.0f; // arma aún no leída: estimación conservadora
-                const auto solution = air_lead_model::solve(origin, unit_pos, air_velocity,
-                    air_acceleration, speed, local_bal.mass, local_bal.caliber, local_bal.drag,
-                    delay, sdk::air_lead_use_turn_prediction);
-                if (!solution.valid)
+                uintptr_t air_container = get_air_container(unit_base, now);
+                if (air_container) {
+                    vec3d_t vel_d{};
+                    const bool velocity_read = TargetProcess->Read(
+                        air_container + offsets::unit_offsets::airmovement_offsets::velocity_offset,
+                        &vel_d, sizeof(vel_d));
+                    vec3_t raw_vel = { static_cast<float>(vel_d.x), static_cast<float>(vel_d.y), static_cast<float>(vel_d.z) };
+                    if (velocity_read && std::isfinite(raw_vel.x) && std::isfinite(raw_vel.y) && std::isfinite(raw_vel.z) &&
+                        raw_vel.length() < 950.0f) {
+                        air_velocity = raw_vel;
+                        velocity_from_native = true;
+                    }
+
+                    vec3d_t acc_d{};
+                    const bool acceleration_read = TargetProcess->Read(
+                        air_container + offsets::unit_offsets::airmovement_offsets::acceleration_offset,
+                        &acc_d, sizeof(acc_d));
+                    vec3_t raw_acc = { static_cast<float>(acc_d.x), static_cast<float>(acc_d.y), static_cast<float>(acc_d.z) };
+                    if (acceleration_read && std::isfinite(raw_acc.x) && std::isfinite(raw_acc.y) && std::isfinite(raw_acc.z) &&
+                        raw_acc.length() < 160.0f) {
+                        air_acceleration = raw_acc;
+                        acceleration_from_native = true;
+                    }
+                }
+
+                if ((cache.have_position && now - cache.last_sample > std::chrono::milliseconds(700)) ||
+                    (cache.last_container && air_container && cache.last_container != air_container)) {
+                    cache = AirLeadCacheEntry{};
+                    cache.next_sample = now + std::chrono::milliseconds(30);
+                }
+                cache.last_container = air_container;
+                cache.solve_origin = origin;
+
+                const auto sample_time = curr_snapshot.captured_at;
+                if (air_lead_model::finite(unit_pos) &&
+                    (!cache.have_position || (unit_pos - cache.last_position).length() > 0.04f))
                 {
-                    cache.initialized = false;
-                    return;
+                    if (cache.have_position)
+                    {
+                        const float dt = std::chrono::duration<float>(sample_time - cache.last_sample).count();
+                        if (dt >= 0.025f && dt <= 0.55f)
+                        {
+                            const vec3_t measured = (unit_pos - cache.last_position) / dt;
+                            if (air_lead_model::finite(measured) && measured.length() < 950.0f)
+                            {
+                                const vec3_t previous = cache.measured_velocity;
+                                const bool had_motion = cache.have_motion;
+                                const float alpha_v = 1.0f - std::exp(-dt / 0.18f);
+                                cache.filtered_velocity = had_motion
+                                    ? cache.filtered_velocity + (measured - cache.filtered_velocity) * alpha_v : measured;
+                                if (had_motion)
+                                {
+                                    const vec3_t derived = (measured - previous) / dt;
+                                    if (air_lead_model::finite(derived) && derived.length() < 160.0f)
+                                    {
+                                        const float alpha_a = 1.0f - std::exp(-dt / 0.32f);
+                                        cache.filtered_acceleration += (derived - cache.filtered_acceleration) * alpha_a;
+                                    }
+                                }
+                                cache.measured_velocity = measured;
+                                cache.have_motion = true;
+                                cache.turn_omega = air_lead_model::update_turn_state(
+                                    cache.filtered_velocity, cache.filtered_acceleration, dt,
+                                    static_cast<std::uint32_t>(unit_base), &cache.turn_state);
+                            }
+                        }
+                        else if (dt > 0.55f)
+                            cache.have_motion = false;
+                    }
+                    cache.last_position = unit_pos;
+                    cache.last_sample = sample_time;
+                    cache.have_position = true;
                 }
-                cache.raw_lead_point = solution.point;
 
-                if (!cache.initialized) {
-                    cache.smoothed_lead_point = cache.raw_lead_point;
-                    cache.last_smooth = now;
-                    cache.initialized = true;
+                if (velocity_from_native && air_velocity.length() < 0.5f &&
+                    cache.have_motion && cache.filtered_velocity.length() > 10.0f)
+                    velocity_from_native = false;
+                if (!velocity_from_native && cache.have_motion)
+                    air_velocity = cache.filtered_velocity;
+                if ((!acceleration_from_native ||
+                    (air_acceleration.length() < 0.1f && cache.filtered_acceleration.length() > 5.0f)) &&
+                    cache.have_motion)
+                    air_acceleration = cache.filtered_acceleration;
+                if (!air_lead_model::finite(air_acceleration) || air_acceleration.length() > 160.0f)
+                    air_acceleration = {};
+                cache.prediction_velocity = air_velocity;
+                cache.prediction_acceleration = air_acceleration;
+                { // already paced by next_sample above
+                    const aimbot::BallisticsData local_bal = aimbot::ballisticsData;
+                    const float sample_age = std::clamp(
+                        std::chrono::duration<float>(now - curr_snapshot.captured_at).count(), 0.0f, 0.20f);
+                    const float delay = sample_age + std::clamp(sdk::air_lead_extra_time, 0.0f, 0.5f);
+                    const float speed = std::isfinite(local_bal.velocity) && local_bal.velocity > 0.0f
+                        ? local_bal.velocity : 300.0f;
+                    const auto solution = air_lead_model::solve(origin, unit_pos, air_velocity,
+                        air_acceleration, speed, local_bal.mass, local_bal.caliber, local_bal.drag,
+                        cache.turn_omega, delay, sdk::air_lead_use_turn_prediction);
+                    if (!solution.valid)
+                    {
+                        cache.initialized = false;
+                        return;
+                    }
+                    cache.raw_lead_point = solution.point;
+
+                    if (!cache.initialized) {
+                        cache.smoothed_lead_point = cache.raw_lead_point;
+                        cache.last_smooth = now;
+                        cache.initialized = true;
+                    }
+                    cache.last_update = now;
                 }
-                cache.last_update = now;
-            }
+            } // sampled work; only projection/smoothing below runs at render FPS
 
             if (cache.initialized)
             {
@@ -1458,7 +1562,7 @@ namespace esp
                 if (sdk::air_lead_smooth_adaptive) {
                     const float min_a = std::clamp(sdk::air_lead_smooth_min_alpha, 0.05f, 0.95f);
                     const float max_a = std::clamp(sdk::air_lead_smooth_max_alpha, min_a, 0.95f);
-                    const float distance_to_target = (unit_pos - origin).length();
+                    const float distance_to_target = (unit_pos - cache.solve_origin).length();
                     const float reactivity = std::clamp((2500.0f - distance_to_target) / 2500.0f, 0.0f, 1.0f);
                     smooth_alpha = min_a + (max_a - min_a) * reactivity;
                 }
@@ -1466,9 +1570,6 @@ namespace esp
                 const float dt_render = std::clamp(
                     std::chrono::duration<float>(now - cache.last_smooth).count(), 0.0f, 0.10f);
                 cache.last_smooth = now;
-                // Convertir la antigua ganancia a una constante de tiempo de
-                // 60 Hz; resultado estable a 30/60/144 FPS. Adelantar también
-                // el punto suavizado para no arrastrarlo detrás de un avión.
                 const float tau = -1.0f / (60.0f * std::log1p(-std::clamp(smooth_alpha, 0.05f, 0.95f)));
                 const float alpha_time = 1.0f - std::exp(-dt_render / tau);
                 const float raw_age = std::clamp(
@@ -1530,8 +1631,11 @@ namespace esp
             if (unit_type.empty())
                 continue;
 
-            uint16_t raw_type = TargetProcess->Read<uint16_t>(unit_base + offsets::unit_offsets::unitType_offset);
+            const uint16_t raw_type = cached_info.raw_type;
             const auto unit_type_info = get_unit_type_info(unit_type, raw_type);
+
+            if (sdk::esp_only_show_planes && !unit_type_info.is_plane)
+                continue;
 
             bool process_air_lead = sdk::air_lead_enabled && sdk::air_lead_use_simulation &&
                 unit_type_info.is_plane && local_team != -1 &&
@@ -1783,7 +1887,7 @@ namespace esp
         if (sdk::aimbot_enabled && has_best_aimbot_target)
         {
             const auto aimbot_start = std::chrono::steady_clock::now();
-            aimbot::run(best_aimbot_unit, best_aimbot_pos, local_pos, camera_matrix);
+            aimbot::run(best_aimbot_unit, best_aimbot_pos, local_pos, camera_matrix, curr_snapshot.captured_at);
             const auto aimbot_end = std::chrono::steady_clock::now();
             aimbot_us_total += static_cast<uint64_t>(
                 std::chrono::duration_cast<std::chrono::microseconds>(aimbot_end - aimbot_start).count()

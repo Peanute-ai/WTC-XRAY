@@ -20,34 +20,44 @@ namespace offsets
     // ========================================================================
     // [SECCIÓN 1] GLOBALES
     // ========================================================================
-    inline uintptr_t alllistdata_offset = 0x7E68768;
-    inline uintptr_t bomb_index = 0x7A01F50;
-    inline uintptr_t cgame_offset = 0x7A272F8;
-    inline uintptr_t hud_offset = 0x7A26920;
-    inline uintptr_t localplayer_offset = 0x79FE8D8;
-    inline uintptr_t my_unit_offset = 0x7A292A0;
-    inline uintptr_t rocket_index = 0x7A03490;
-    inline uintptr_t is_scoping_offset = 0x7A7050C;
-    inline uintptr_t screen_width_offset = 0x7E6D4D0;
-    inline uintptr_t view_matrix_offset = 0x7A81378;
-    inline uintptr_t view_angles_offset = 0x7A2BE08;
+    namespace Global
+    {
+        // Valores verificados en partida contra los logs (selector 311 / 318).
+        // Los del JSON (0x7A024E0 / 0x7A00FA0 / 0x7E677A8) producen un selector
+        // basura y la lectura del record falla: no se dibuja ningun misil.
+        inline uintptr_t g_RocketListIndexPtr = 0x7A02490;
+        inline uintptr_t g_BombListIndexPtr = 0x7A00F50;
+        inline uintptr_t g_EntityManager = 0x7E67768;
+    }
 
-    inline uintptr_t proj_ballistics_props_positive_offset = 0x7A0C010;
-    inline uintptr_t proj_ballistics_props_negative_offset = 0x7A0C078;
-    inline uintptr_t bullet_props_positive_offset = 0x7A15340;
-    inline uintptr_t bullet_props_negative_offset = 0x7A153A8;
+    inline uintptr_t alllistdata_offset = 0x7E677A8;
+    inline uintptr_t bomb_index = 0x7A00F50;
+    inline uintptr_t cgame_offset = 0x7A26348;
+    inline uintptr_t hud_offset = 0x7A25970;
+    inline uintptr_t localplayer_offset = 0x79FD928;
+    inline uintptr_t my_unit_offset = 0x7A282F0;
+    inline uintptr_t rocket_index = 0x7A02490;
+    inline uintptr_t is_scoping_offset = 0x7A6F55C;
+    inline uintptr_t screen_width_offset = 0x7E6C550;
+    inline uintptr_t view_matrix_offset = 0x7A803B8;
+    inline uintptr_t view_angles_offset = 0x7A2AE58;
 
-    inline uintptr_t air_prediction_bool_offset = 0x7E8FCA0;
-    inline uintptr_t game_font_list_offset = 0x7F42068;
-    inline uintptr_t game_optics_offset = 0x7A29170;
-    inline uintptr_t localization_info_offset = 0x7E6A0A0;
-    inline uintptr_t map_drawn_this_frame_offset = 0x7A7476C;
-    inline uintptr_t map_full_world_center_offset = 0x7A74780;
-    inline uintptr_t map_full_world_size_offset = 0x792A7A0;
-    inline uintptr_t map_minimap_pos_offset = 0x792A790;
-    inline uintptr_t map_minimap_size_offset = 0x792A798;
-    inline uintptr_t map_view_size_offset = 0x792A788;
-    inline uintptr_t map_world_center_offset = 0x7A74770;
+    inline uintptr_t proj_ballistics_props_positive_offset = 0x7A0B060;
+    inline uintptr_t proj_ballistics_props_negative_offset = 0x7A0B0C8;
+    inline uintptr_t bullet_props_positive_offset = 0x7A14390;
+    inline uintptr_t bullet_props_negative_offset = 0x7A143F8;
+
+    inline uintptr_t air_prediction_bool_offset = 0x7E8ED20;
+    inline uintptr_t game_font_list_offset = 0x7F410E8;
+    inline uintptr_t game_optics_offset = 0x7A281C0;
+    inline uintptr_t localization_info_offset = 0x7E690E0;
+    inline uintptr_t map_drawn_this_frame_offset = 0x7A737AC;
+    inline uintptr_t map_full_world_center_offset = 0x7A737C0;
+    inline uintptr_t map_full_world_size_offset = 0x79297A0;
+    inline uintptr_t map_minimap_pos_offset = 0x7929790;
+    inline uintptr_t map_minimap_size_offset = 0x7929798;
+    inline uintptr_t map_view_size_offset = 0x7929788;
+    inline uintptr_t map_world_center_offset = 0x7A737B0;
     inline uintptr_t tactical_map_obj_offset = 0x7A74858;
 
     namespace tactical_map_offsets
@@ -58,22 +68,22 @@ namespace offsets
         inline uintptr_t bounds_max = 0x517C;
         inline uintptr_t mode_stride = 72;
     }
-    inline uintptr_t name_map_offset = 0x7A240B8;
-    inline uintptr_t reload_offset1 = 0x7E66770;
-    inline uintptr_t reload_offset2 = 0x7E66768;
-    inline uintptr_t reload_offset3 = 0x79F370C;
-    inline uintptr_t reload_offset4 = 0x7E66870;
-    inline uintptr_t reload_offset5 = 0x7E66860;
-    inline uintptr_t reload_offset6 = 0x7E668F8;
-    inline uintptr_t reload_offset7 = 0x7E66868;
-    inline uintptr_t ui_pos_arr_offset = 0x7A716A8;
-    inline uintptr_t function_das_get_usefull_total_time = 0xAC4680;
+    inline uintptr_t name_map_offset = 0x7A25168;
+    inline uintptr_t reload_offset1 = 0x7E67830;
+    inline uintptr_t reload_offset2 = 0x7E67828;
+    inline uintptr_t reload_offset3 = 0x79F47BC;
+    inline uintptr_t reload_offset4 = 0x7E67930;
+    inline uintptr_t reload_offset5 = 0x7E67920;
+    inline uintptr_t reload_offset6 = 0x7E679B8;
+    inline uintptr_t reload_offset7 = 0x7E67928;
+    inline uintptr_t ui_pos_arr_offset = 0x7A72768;
+    inline uintptr_t function_das_get_usefull_total_time = 0xAC44A0;
 
-    inline uintptr_t base_game_version_str = 0x7A2A9D8;
-    inline uintptr_t clock_obj = 0x79FED80;
-    inline uintptr_t game_difficulty = 0x798FCB8;
-    inline uintptr_t is_in_hangar_offset = 0x7A10C1B;
-    inline uintptr_t function_rayhit_normalized = 0x3447B80;
+    inline uintptr_t base_game_version_str = 0x7A2BA88;
+    inline uintptr_t clock_obj = 0x79FFE30;
+    inline uintptr_t game_difficulty = 0x7990D18;
+    inline uintptr_t is_in_hangar_offset = 0x7A11CCB;
+    inline uintptr_t function_rayhit_normalized = 0x34481A0;
 
     // ========================================================================
     // [SECCIÓN 2] CGAME
@@ -211,6 +221,7 @@ namespace offsets
         inline uintptr_t rotation_matrix_offset = 0xD1C;
         inline uintptr_t unitArmyNo_offset = 0x1018;
         inline uintptr_t unitIndex_offset = 0x8;
+        inline uintptr_t unit_uid_offset = 0x8;
         inline uintptr_t unitState_offset = 0xF98;
         inline uintptr_t unitType_offset = 0x8C;
         inline uintptr_t visualReloadProgress_offset = 0xAF0;
@@ -379,60 +390,41 @@ namespace offsets
 
     // ========================================================================
     // [SECCIÓN 10] DAMAGE MODEL — PACKED BVH + SKELETON TREE
-    //
-    //   Cadena:
-    //     unit + 0x10A8                          → dm_root
-    //     dm_root + 0x78                         → m_ValidFlag (u8, ==1 live)
-    //     dm_root + 0x58                         → collision_res (m_ModelContainer)
-    //     collision_res + 0x78                   → headerAddr (m_PackedHeader)
-    //     collision_res + 0xA0                   → matrix_array_base (bind pose, 3x4 col-major)
-    //
-    //   Skeleton animado (para cañón / torreta):
-    //     unit + 0x258                           → tree (m_ModelTransform)
-    //     tree + 0x20                            → packed (m_PackedBase)
-    //     tree + 0x10                            → tree_count (u16)
-    //     packed + tree_index * 0x40             → 4x4 col-major (16 floats)
     // ========================================================================
     namespace damage_model
     {
-        // DamageModelContainer (a unit + 0x10A8)
-        inline uintptr_t m_ValidFlag = 0x78;              // u8 — ==1 cuando el DM está vivo
-        inline uintptr_t m_ModelContainer = 0x58;         // → collision_res
+        inline uintptr_t m_ValidFlag = 0x78;
+        inline uintptr_t m_ModelContainer = 0x58;
         inline uintptr_t m_Header = 0x368;
         inline uintptr_t m_StateArray = 0x3F8;
         inline uintptr_t m_StateCount = 0x400;
         inline uintptr_t m_StaticProps = 0x3B8;
 
-        // ModelContainer (a collision_res)
         inline uintptr_t m_PackedHeader = 0x78;
-        inline uintptr_t m_TransformArray = 0xA0;         // shared bind poses, 3x4 col-major stride 0x30
+        inline uintptr_t m_TransformArray = 0xA0;
 
-        // PackedHeader (relativo a headerAddr)
         inline uintptr_t records_rel = 0x04;
         inline uintptr_t node_count = 0x08;
         inline uintptr_t geometry_rel = 0x24;
         inline uintptr_t names_rel = 0x4C;
         inline uintptr_t names_valid = 0x50;
 
-        // PackedRecord (stride 0x40, base = header + records_rel)
         inline uintptr_t record_stride = 0x40;
-        inline uintptr_t rec_tree_index = 0x04;      // u16 — m_TreeIndex (skeleton animado)
-        inline uintptr_t rec_bbmin = 0x08;      // Vector3 — part-local AABB min
-        inline uintptr_t rec_bbmax = 0x14;      // Vector3 — part-local AABB max
-        inline uintptr_t rec_transform_index = 0x24;      // u16 — índice al m_TransformArray
-        inline uintptr_t rec_vert_count = 0x30;      // legacy / no usado por packed BVH
-        inline uintptr_t rec_geometry_rel = 0x34;      // u32 — offset relativo al pool
-        inline uintptr_t rec_geometry_flags = 0x38;      // u32 — 0 = no hay geometría
-        inline uintptr_t rec_name_offset = 0x3C;      // u32 — offset al names pool
+        inline uintptr_t rec_tree_index = 0x04;
+        inline uintptr_t rec_bbmin = 0x08;
+        inline uintptr_t rec_bbmax = 0x14;
+        inline uintptr_t rec_transform_index = 0x24;
+        inline uintptr_t rec_vert_count = 0x30;
+        inline uintptr_t rec_geometry_rel = 0x34;
+        inline uintptr_t rec_geometry_flags = 0x38;
+        inline uintptr_t rec_name_offset = 0x3C;
 
-        // PackedGeometry (pool item, base = header + geometry_rel + record.geometry_rel)
         inline uintptr_t geom_quant_scale = 0x0C;
         inline uintptr_t geom_quant_offset = 0x18;
         inline uintptr_t geom_tree_bytes = 0x24;
         inline uintptr_t geom_root = 0x28;
         inline uintptr_t geom_data = 0x30;
 
-        // Límites de seguridad
         inline int max_parts = 512;
         inline int max_vertices = 200000;
         inline int max_tris = 200000;
@@ -440,9 +432,8 @@ namespace offsets
         inline int node_budget = 50000;
         inline int cache_ttl_seconds = 60;
 
-        // GeomNodeTree (base = *(unit + m_ModelTransform))
-        inline uintptr_t geom_node_tree_count = 0x10;     // u16
-        inline uintptr_t geom_node_tree_base = 0x20;     // uintptr_t → m_PackedBase
+        inline uintptr_t geom_node_tree_count = 0x10;
+        inline uintptr_t geom_node_tree_base = 0x20;
     }
 
     // ========================================================================
@@ -460,6 +451,9 @@ namespace offsets
     {
         static constexpr std::array registry = {
             // [1] GLOBALES
+            runtime_offset_entry{"g_RocketListIndexPtr", &offsets::Global::g_RocketListIndexPtr},
+            runtime_offset_entry{"g_BombListIndexPtr", &offsets::Global::g_BombListIndexPtr},
+            runtime_offset_entry{"g_EntityManager", &offsets::Global::g_EntityManager},
             runtime_offset_entry{"alllistdata_offset", &offsets::alllistdata_offset},
             runtime_offset_entry{"bomb_index", &offsets::bomb_index},
             runtime_offset_entry{"cgame_offset", &offsets::cgame_offset},

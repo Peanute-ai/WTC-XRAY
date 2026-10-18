@@ -142,6 +142,7 @@ namespace GUI
         bool  esp_show_reload_seconds = false;
         bool  esp_show_fps = true;
         bool  esp_show_bomb_impact = true;
+        bool  esp_only_show_planes = false;
 
         // Vehicle filters
         bool show_helicopter = true;
@@ -264,7 +265,7 @@ namespace GUI
     struct int_binding_t { int menu_preset_t::* preset; int* runtime; };
 
     // ---- Tamaños EXACTOS (bug #1 corregido) ----
-    inline const std::array<bool_binding_t, 49> bool_bindings = { {
+    inline const std::array<bool_binding_t, 50> bool_bindings = { {
         { &menu_preset_t::esp_enabled, &sdk::esp_enabled },
         { &menu_preset_t::radar_enabled, &sdk::radar_enabled },
         { &menu_preset_t::aimbot_enabled, &sdk::aimbot_enabled },
@@ -276,6 +277,7 @@ namespace GUI
         { &menu_preset_t::esp_show_reload_seconds, &sdk::esp_show_reload_seconds },
         { &menu_preset_t::esp_show_fps, &sdk::esp_show_fps },
         { &menu_preset_t::esp_show_bomb_impact, &sdk::esp_show_bomb_impact },
+        { &menu_preset_t::esp_only_show_planes, &sdk::esp_only_show_planes },
         { &menu_preset_t::show_helicopter, &sdk::show_helicopter },
         { &menu_preset_t::show_bomber, &sdk::show_bomber },
         { &menu_preset_t::show_fighter, &sdk::show_fighter },
@@ -478,6 +480,7 @@ namespace GUI
             read_bool("esp_show_reload_seconds", loaded.esp_show_reload_seconds);
             read_bool("esp_show_fps", loaded.esp_show_fps);
             read_bool("esp_show_bomb_impact", loaded.esp_show_bomb_impact);
+            read_bool("esp_only_show_planes", loaded.esp_only_show_planes);
 
             // Vehicle filters
             read_bool("show_helicopter", loaded.show_helicopter);
@@ -649,6 +652,7 @@ namespace GUI
             output << prefix << "esp_show_reload_seconds=" << (p.esp_show_reload_seconds ? 1 : 0) << '\n';
             output << prefix << "esp_show_fps=" << (p.esp_show_fps ? 1 : 0) << '\n';
             output << prefix << "esp_show_bomb_impact=" << (p.esp_show_bomb_impact ? 1 : 0) << '\n';
+            output << prefix << "esp_only_show_planes=" << (p.esp_only_show_planes ? 1 : 0) << '\n';
 
             output << prefix << "show_helicopter=" << (p.show_helicopter ? 1 : 0) << '\n';
             output << prefix << "show_bomber=" << (p.show_bomber ? 1 : 0) << '\n';
@@ -964,90 +968,127 @@ namespace GUI
                     {
                         if (ImGui::BeginTabItem("General"))
                         {
-                    ImGui::Checkbox("Enable ESP", &sdk::esp_enabled);
-                    ImGui::SameLine();
-                    ImGui::Checkbox("Show FPS", &sdk::esp_show_fps);
-                    ImGui::Checkbox("Show Bomb Impact", &sdk::esp_show_bomb_impact);
-                    ImGui::SliderFloat("Render Distance", &sdk::esp_render_distance, 1000.f, 55000.f, "%.0f m");
-                    ImGui::SliderFloat("Box Distance", &sdk::esp_box_distance, 500.f, 3500.f, "%.0f m");
+                            ImGui::Checkbox("Enable ESP", &sdk::esp_enabled);
+                            ImGui::SameLine();
+                            ImGui::Checkbox("Show FPS", &sdk::esp_show_fps);
+                            ImGui::SeparatorText("Perfil (ms por fotograma)");
+                            {
+                                const double frame_ms = misc::prof_main_frame_us.load() / 1000.0;
+                                ImGui::Text("Frame %.2f ms  |  %.0f FPS", frame_ms,
+                                    frame_ms > 0.0 ? 1000.0 / frame_ms : 0.0);
+                                ImGui::Text("Snapshot %.2f  ESP %.2f  Aimbot %.2f",
+                                    misc::prof_update_frame_us.load() / 1000.0,
+                                    misc::prof_esp_us.load() / 1000.0,
+                                    misc::prof_aimbot_us.load() / 1000.0);
+                                ImGui::Text("Edad snapshot %.2f ms  |  w2s %llu  obb %llu",
+                                    misc::prof_snapshot_age_us.load() / 1000.0,
+                                    static_cast<unsigned long long>(misc::prof_esp_w2s_calls.load()),
+                                    static_cast<unsigned long long>(misc::prof_esp_obb_calls.load()));
+                                ImGui::Text("Projectile %.2f ms  (presupuesto %d reads)",
+                                    misc::prof_projectile_us.load() / 1000.0,
+                                    sdk::projectile_scan_budget);
+                            }
+                            ImGui::Checkbox("Only Show Planes", &sdk::esp_only_show_planes);
+                            if (ImGui::IsItemHovered())
+                                ImGui::SetTooltip("Oculta todo lo que no sea aereo: terrestre, naval y estructuras.");
+                            ImGui::Checkbox("Show Bomb Impact", &sdk::esp_show_bomb_impact);
+                            ImGui::Checkbox("Live Projectile ESP (experimental ECS)", &sdk::projectile_esp_enabled);
+                            ImGui::Checkbox("Projectile Debug", &sdk::projectile_debug);
+                            ImGui::SliderInt("Missile Scan Budget", &sdk::projectile_scan_budget, 256, 4096, "%d reads");
+                            ImGui::Checkbox("Only Air-to-Air Missiles (AAM)", &sdk::projectile_aam_only);
+                            if (ImGui::IsItemHovered())
+                                ImGui::SetTooltip("Dibuja unicamente misiles aire-aire (familias AAM por nombre).\nDescarta aire-tierra, antiradiacion, bombas, cohetes y bengalas.\nSi falta un misil, mira notaamname= en el log de debug.");
+                            ImGui::Checkbox("Only Incoming Missiles", &sdk::projectile_incoming_only);
+                            if (ImGui::IsItemHovered())
+                                ImGui::SetTooltip("Solo dibuja misiles que vienen hacia ti (cierre + cono).\nLas bengalas se descartan siempre por nombre.");
+                            if (sdk::projectile_incoming_only)
+                            {
+                                ImGui::Checkbox("Use Confirmed Local Player", &sdk::projectile_incoming_use_localplayer);
+                                if (ImGui::IsItemHovered())
+                                    ImGui::SetTooltip("Usa el jugador local confirmado del snapshot (el mismo del radar/aimbot).\nSi no esta disponible, cae a la lectura directa.");
+                                ImGui::SliderFloat("Incoming Distance", &sdk::projectile_incoming_distance, 500.0f, 8000.0f, "%.0f m");
+                                ImGui::SliderFloat("Incoming Angle", &sdk::projectile_incoming_angle, 5.0f, 60.0f, "%.0f deg");
+                            }
+                            ImGui::SliderFloat("Render Distance", &sdk::esp_render_distance, 1000.f, 55000.f, "%.0f m");
+                            ImGui::SliderFloat("Box Distance", &sdk::esp_box_distance, 500.f, 3500.f, "%.0f m");
 
-                    ImGui::SeparatorText("Boxes");
-                    ImGui::Checkbox("2D Box", &sdk::esp_show_boxes);
-                    ImGui::SameLine();
-                    ImGui::Checkbox("3D Box", &sdk::esp_use_3d_boxes);
+                            ImGui::SeparatorText("Boxes");
+                            ImGui::Checkbox("2D Box", &sdk::esp_show_boxes);
+                            ImGui::SameLine();
+                            ImGui::Checkbox("3D Box", &sdk::esp_use_3d_boxes);
 
-                    ImGui::SeparatorText("Labels");
-                    ImGui::Checkbox("Vehicle Names", &sdk::esp_show_vehicle_names);
-                    ImGui::SameLine();
-                    ImGui::Checkbox("Distance", &sdk::esp_show_distance);
-                    ImGui::Checkbox("Reload Progress", &sdk::esp_show_reload);
-                    ImGui::SameLine();
-                    ImGui::Checkbox("Seconds", &sdk::esp_show_reload_seconds);
+                            ImGui::SeparatorText("Labels");
+                            ImGui::Checkbox("Vehicle Names", &sdk::esp_show_vehicle_names);
+                            ImGui::SameLine();
+                            ImGui::Checkbox("Distance", &sdk::esp_show_distance);
+                            ImGui::Checkbox("Reload Progress", &sdk::esp_show_reload);
+                            ImGui::SameLine();
+                            ImGui::Checkbox("Seconds", &sdk::esp_show_reload_seconds);
 
-                    ImGui::SeparatorText("Font Sizes");
-                    ImGui::SliderFloat("Name Size", &sdk::esp_font_size_name, 8.0f, 36.0f, "%.0f");
-                    ImGui::SliderFloat("Distance Size", &sdk::esp_font_size_distance, 8.0f, 36.0f, "%.0f");
-                    ImGui::SliderFloat("Reload Size", &sdk::esp_font_size_reload, 8.0f, 36.0f, "%.0f");
-                    ImGui::SliderFloat("Module Name Size", &sdk::esp_font_size_module, 8.0f, 36.0f, "%.0f");
+                            ImGui::SeparatorText("Font Sizes");
+                            ImGui::SliderFloat("Name Size", &sdk::esp_font_size_name, 8.0f, 36.0f, "%.0f");
+                            ImGui::SliderFloat("Distance Size", &sdk::esp_font_size_distance, 8.0f, 36.0f, "%.0f");
+                            ImGui::SliderFloat("Reload Size", &sdk::esp_font_size_reload, 8.0f, 36.0f, "%.0f");
+                            ImGui::SliderFloat("Module Name Size", &sdk::esp_font_size_module, 8.0f, 36.0f, "%.0f");
 
-                    ImGui::EndTabItem();
+                            ImGui::EndTabItem();
                         }
                         if (ImGui::BeginTabItem("Vehicles"))
                         {
-                    ImGui::TextDisabled("Los colores se configuran en la pestaña Colors.");
-                    const auto draw_vehicle_row = [](const char* label, bool* enabled)
-                        {
-                            ImGui::PushID(label);
-                            ImGui::Checkbox(label, enabled);
-                            ImGui::PopID();
-                        };
-                    draw_vehicle_row("Helicopter", &sdk::show_helicopter);
-                    draw_vehicle_row("Bomber", &sdk::show_bomber);
-                    draw_vehicle_row("Fighter", &sdk::show_fighter);
-                    draw_vehicle_row("Attacker", &sdk::show_attacker);
-                    draw_vehicle_row("Recon Drone", &sdk::show_recon_drone);
-                    draw_vehicle_row("Light Tank", &sdk::show_light_tank);
-                    draw_vehicle_row("Heavy Tank", &sdk::show_heavy_tank);
-                    draw_vehicle_row("Medium Tank", &sdk::show_medium_tank);
-                    draw_vehicle_row("SPAA", &sdk::show_spaa);
-                    draw_vehicle_row("Gun Boat", &sdk::show_gun_boat);
-                    draw_vehicle_row("Destroyer", &sdk::show_destroyer);
-                    draw_vehicle_row("Cruiser", &sdk::show_cruiser);
-                    draw_vehicle_row("Torpedo Boat", &sdk::show_torpedo_boat);
+                            ImGui::TextDisabled("Los colores se configuran en la pestaña Colors.");
+                            const auto draw_vehicle_row = [](const char* label, bool* enabled)
+                                {
+                                    ImGui::PushID(label);
+                                    ImGui::Checkbox(label, enabled);
+                                    ImGui::PopID();
+                                };
+                            draw_vehicle_row("Helicopter", &sdk::show_helicopter);
+                            draw_vehicle_row("Bomber", &sdk::show_bomber);
+                            draw_vehicle_row("Fighter", &sdk::show_fighter);
+                            draw_vehicle_row("Attacker", &sdk::show_attacker);
+                            draw_vehicle_row("Recon Drone", &sdk::show_recon_drone);
+                            draw_vehicle_row("Light Tank", &sdk::show_light_tank);
+                            draw_vehicle_row("Heavy Tank", &sdk::show_heavy_tank);
+                            draw_vehicle_row("Medium Tank", &sdk::show_medium_tank);
+                            draw_vehicle_row("SPAA", &sdk::show_spaa);
+                            draw_vehicle_row("Gun Boat", &sdk::show_gun_boat);
+                            draw_vehicle_row("Destroyer", &sdk::show_destroyer);
+                            draw_vehicle_row("Cruiser", &sdk::show_cruiser);
+                            draw_vehicle_row("Torpedo Boat", &sdk::show_torpedo_boat);
 
-                    ImGui::SeparatorText("Filter");
-                    ImGui::SliderInt("Death State Threshold", &sdk::death_state_threshold, 1, 2);
-                    ImGui::EndTabItem();
+                            ImGui::SeparatorText("Filter");
+                            ImGui::SliderInt("Death State Threshold", &sdk::death_state_threshold, 1, 2);
+                            ImGui::EndTabItem();
                         }
                         if (ImGui::BeginTabItem("X-Ray"))
                         {
-                    ImGui::Text("Damage Model");
-                    ImGui::Checkbox("Enable X-Ray", &sdk::bShowDamageModel);
-                    ImGui::SameLine();
-                    ImGui::Checkbox("Module Names", &sdk::bShowModuleNames);
-                    ImGui::Combo("Render Mode", &sdk::xray_render_mode, "Wireframe\0Solid\0Surface\0");
-                    ImGui::Checkbox("Wireframe Overlay", &sdk::xray_wireframe_overlay);
+                            ImGui::Text("Damage Model");
+                            ImGui::Checkbox("Enable X-Ray", &sdk::bShowDamageModel);
+                            ImGui::SameLine();
+                            ImGui::Checkbox("Module Names", &sdk::bShowModuleNames);
+                            ImGui::Combo("Render Mode", &sdk::xray_render_mode, "Wireframe\0Solid\0Surface\0");
+                            ImGui::Checkbox("Wireframe Overlay", &sdk::xray_wireframe_overlay);
 
-                    ImGui::SeparatorText("Module Visibility");
-                    ImGui::Checkbox("Gun Barrel", &sdk::bShowModuleGunBarrel); ImGui::SameLine();
-                    ImGui::Checkbox("Cannon Breech", &sdk::bShowModuleCannonBreech);
-                    ImGui::Checkbox("Crew", &sdk::bShowModuleCrew); ImGui::SameLine();
-                    ImGui::Checkbox("Fuel Tank", &sdk::bShowModuleFuelTank);
-                    ImGui::Checkbox("Ammo Rack", &sdk::bShowModuleAmmoRack); ImGui::SameLine();
-                    ImGui::Checkbox("Engine", &sdk::bShowModuleEngine);
-                    ImGui::Checkbox("Transmission", &sdk::bShowModuleTransmission);
+                            ImGui::SeparatorText("Module Visibility");
+                            ImGui::Checkbox("Gun Barrel", &sdk::bShowModuleGunBarrel); ImGui::SameLine();
+                            ImGui::Checkbox("Cannon Breech", &sdk::bShowModuleCannonBreech);
+                            ImGui::Checkbox("Crew", &sdk::bShowModuleCrew); ImGui::SameLine();
+                            ImGui::Checkbox("Fuel Tank", &sdk::bShowModuleFuelTank);
+                            ImGui::Checkbox("Ammo Rack", &sdk::bShowModuleAmmoRack); ImGui::SameLine();
+                            ImGui::Checkbox("Engine", &sdk::bShowModuleEngine);
+                            ImGui::Checkbox("Transmission", &sdk::bShowModuleTransmission);
 
-                    ImGui::SliderFloat("Hide small modules >", &sdk::xray_small_module_distance, 50.0f, 2000.0f, "%.0f m");
-                    ImGui::SliderFloat("Line Thickness", &sdk::xray_line_thickness, 0.2f, 3.0f, "%.1f");
-                    ImGui::SliderFloat("Module Alpha", &sdk::xray_module_alpha, 0.0f, 1.0f, "%.2f");
-                    {
-                        static int xd = (int)sdk::xray_render_distance, nd = (int)sdk::xray_names_distance;
-                        xd = (int)sdk::xray_render_distance; nd = (int)sdk::xray_names_distance;
-                        ImGui::SliderInt("X-Ray Distance", &xd, 100, 5000, "%d m"); sdk::xray_render_distance = (float)xd;
-                        ImGui::SliderInt("Names Distance", &nd, 100, 5000, "%d m"); sdk::xray_names_distance = (float)nd;
-                    }
-                    ImGui::TextDisabled("Colores de modulos en Colors > X-Ray.");
-                    ImGui::EndTabItem();
+                            ImGui::SliderFloat("Hide small modules >", &sdk::xray_small_module_distance, 50.0f, 2000.0f, "%.0f m");
+                            ImGui::SliderFloat("Line Thickness", &sdk::xray_line_thickness, 0.2f, 3.0f, "%.1f");
+                            ImGui::SliderFloat("Module Alpha", &sdk::xray_module_alpha, 0.0f, 1.0f, "%.2f");
+                            {
+                                static int xd = (int)sdk::xray_render_distance, nd = (int)sdk::xray_names_distance;
+                                xd = (int)sdk::xray_render_distance; nd = (int)sdk::xray_names_distance;
+                                ImGui::SliderInt("X-Ray Distance", &xd, 100, 5000, "%d m"); sdk::xray_render_distance = (float)xd;
+                                ImGui::SliderInt("Names Distance", &nd, 100, 5000, "%d m"); sdk::xray_names_distance = (float)nd;
+                            }
+                            ImGui::TextDisabled("Colores de modulos en Colors > X-Ray.");
+                            ImGui::EndTabItem();
                         }
                         ImGui::EndTabBar();
                     }
@@ -1075,24 +1116,33 @@ namespace GUI
                         }
                         if (ImGui::BeginTabItem("Air Lead"))
                         {
-                    ImGui::Text("Air Lead Indicator");
-                    ImGui::Checkbox("Enable Air Lead", &sdk::air_lead_enabled);
-                    ImGui::Checkbox("Use Simulation", &sdk::air_lead_use_simulation);
-                    ImGui::Checkbox("Only Target (center)", &sdk::air_lead_only_target);
-                    ImGui::TextDisabled("Color del indicador en Colors > Air Lead.");
-                    ImGui::SliderFloat("Marker Size", &sdk::air_lead_marker_size, 2.0f, 15.0f, "%.1f");
-                    ImGui::SliderFloat("Line Thickness", &sdk::air_lead_line_thickness, 0.5f, 3.0f, "%.1f");
+                            ImGui::Text("Air Lead Indicator");
+                            ImGui::Checkbox("Enable Air Lead", &sdk::air_lead_enabled);
+                            ImGui::Checkbox("Use Simulation", &sdk::air_lead_use_simulation);
+                            ImGui::Checkbox("Turn Prediction (3D)", &sdk::air_lead_use_turn_prediction);
+                            if (ImGui::IsItemHovered())
+                                ImGui::SetTooltip("Modela el giro del objetivo con su aceleracion normal.\nNecesita que la aceleracion se lea bien; si no, deja solo Use Simulation.");
+                            ImGui::Checkbox("Adaptive Smoothing", &sdk::air_lead_smooth_adaptive);
+                            if (sdk::air_lead_smooth_adaptive)
+                            {
+                                ImGui::SliderFloat("Smooth Min Alpha", &sdk::air_lead_smooth_min_alpha, 0.05f, 0.95f, "%.2f");
+                                ImGui::SliderFloat("Smooth Max Alpha", &sdk::air_lead_smooth_max_alpha, 0.05f, 0.95f, "%.2f");
+                            }
+                            ImGui::Checkbox("Only Target (center)", &sdk::air_lead_only_target);
+                            ImGui::TextDisabled("Color del indicador en Colors > Air Lead.");
+                            ImGui::SliderFloat("Marker Size", &sdk::air_lead_marker_size, 2.0f, 15.0f, "%.1f");
+                            ImGui::SliderFloat("Line Thickness", &sdk::air_lead_line_thickness, 0.5f, 3.0f, "%.1f");
 
-                    ImGui::SeparatorText("Air Lead Extra");
-                    ImGui::SliderFloat("Extra Lead Time (s)", &sdk::air_lead_extra_time, 0.0f, 0.5f, "%.2f");
+                            ImGui::SeparatorText("Air Lead Extra");
+                            ImGui::SliderFloat("Extra Lead Time (s)", &sdk::air_lead_extra_time, 0.0f, 0.5f, "%.2f");
 
-                    ImGui::SeparatorText("Air Lead Targets");
-                    ImGui::Checkbox("Helicopters", &sdk::air_lead_target_helicopter);
-                    ImGui::Checkbox("Recon Drones", &sdk::air_lead_target_recon_drone);
-                    ImGui::Checkbox("Fighters", &sdk::air_lead_target_fighter);
-                    ImGui::Checkbox("Bombers", &sdk::air_lead_target_bomber);
-                    ImGui::Checkbox("Attackers", &sdk::air_lead_target_attacker);
-                    ImGui::EndTabItem();
+                            ImGui::SeparatorText("Air Lead Targets");
+                            ImGui::Checkbox("Helicopters", &sdk::air_lead_target_helicopter);
+                            ImGui::Checkbox("Recon Drones", &sdk::air_lead_target_recon_drone);
+                            ImGui::Checkbox("Fighters", &sdk::air_lead_target_fighter);
+                            ImGui::Checkbox("Bombers", &sdk::air_lead_target_bomber);
+                            ImGui::Checkbox("Attackers", &sdk::air_lead_target_attacker);
+                            ImGui::EndTabItem();
                         }
                         ImGui::EndTabBar();
                     }
@@ -1203,39 +1253,39 @@ namespace GUI
                     {
                         if (ImGui::BeginTabItem("Video & Monitor"))
                         {
-                    int safe_monitor_index = sdk::monitor_index;
-                    if (sdk::monitor_count <= 0) safe_monitor_index = 0;
-                    else { if (safe_monitor_index < 0) safe_monitor_index = 0; if (safe_monitor_index > sdk::monitor_count - 1) safe_monitor_index = sdk::monitor_count - 1; }
-                    sdk::monitor_index = safe_monitor_index;
+                            int safe_monitor_index = sdk::monitor_index;
+                            if (sdk::monitor_count <= 0) safe_monitor_index = 0;
+                            else { if (safe_monitor_index < 0) safe_monitor_index = 0; if (safe_monitor_index > sdk::monitor_count - 1) safe_monitor_index = sdk::monitor_count - 1; }
+                            sdk::monitor_index = safe_monitor_index;
 
-                    const char* preview = "Unknown monitor";
-                    if (!sdk::monitor_labels.empty() && safe_monitor_index < (int)sdk::monitor_labels.size())
-                        preview = sdk::monitor_labels[safe_monitor_index].c_str();
-                    if (ImGui::BeginCombo("Monitor", preview))
-                    {
-                        for (int i = 0; i < (int)sdk::monitor_labels.size(); ++i)
-                        {
-                            const bool is_selected = (sdk::monitor_index == i);
-                            if (ImGui::Selectable(sdk::monitor_labels[i].c_str(), is_selected))
+                            const char* preview = "Unknown monitor";
+                            if (!sdk::monitor_labels.empty() && safe_monitor_index < (int)sdk::monitor_labels.size())
+                                preview = sdk::monitor_labels[safe_monitor_index].c_str();
+                            if (ImGui::BeginCombo("Monitor", preview))
                             {
-                                sdk::monitor_index = i;
+                                for (int i = 0; i < (int)sdk::monitor_labels.size(); ++i)
+                                {
+                                    const bool is_selected = (sdk::monitor_index == i);
+                                    if (ImGui::Selectable(sdk::monitor_labels[i].c_str(), is_selected))
+                                    {
+                                        sdk::monitor_index = i;
+                                        sync_shared_settings_to_all_presets();
+                                    }
+                                    if (is_selected) ImGui::SetItemDefaultFocus();
+                                }
+                                ImGui::EndCombo();
+                            }
+                            if (ImGui::Button("Apply Fullscreen to Monitor")) sdk::request_monitor_apply = true;
+                            if (ImGui::Checkbox("Apply Fullscreen on Start", &sdk::auto_fullscreen_on_start))
+                            {
                                 sync_shared_settings_to_all_presets();
                             }
-                            if (is_selected) ImGui::SetItemDefaultFocus();
-                        }
-                        ImGui::EndCombo();
-                    }
-                    if (ImGui::Button("Apply Fullscreen to Monitor")) sdk::request_monitor_apply = true;
-                    if (ImGui::Checkbox("Apply Fullscreen on Start", &sdk::auto_fullscreen_on_start))
-                    {
-                        sync_shared_settings_to_all_presets();
-                    }
-                    ImGui::SeparatorText("Video");
-                    ImGui::Checkbox("V-Sync", &sdk::esp_vsync_enabled);
-                    ImGui::SetNextItemWidth(135);
-                    if (ImGui::InputInt("Target FPS", &sdk::esp_vsync_fps))
-                        sdk::esp_vsync_fps = std::clamp(sdk::esp_vsync_fps, 30, 500);
-                    ImGui::EndTabItem();
+                            ImGui::SeparatorText("Video");
+                            ImGui::Checkbox("V-Sync", &sdk::esp_vsync_enabled);
+                            ImGui::SetNextItemWidth(135);
+                            if (ImGui::InputInt("Target FPS", &sdk::esp_vsync_fps))
+                                sdk::esp_vsync_fps = std::clamp(sdk::esp_vsync_fps, 30, 500);
+                            ImGui::EndTabItem();
                         }
                         if (ImGui::BeginTabItem("Hotkeys"))
                         {
@@ -1259,47 +1309,47 @@ namespace GUI
                         }
                         if (ImGui::BeginTabItem("Appearance"))
                         {
-                    ImGui::Combo("Theme", &sdk::menu_style, "Dark\0Classic\0Crimson\0Midnight\0Minimal Light\0Forest\0Ocean\0");
-                    ApplyMenuStyle(sdk::menu_style);
-                    ImGui::EndTabItem();
+                            ImGui::Combo("Theme", &sdk::menu_style, "Dark\0Classic\0Crimson\0Midnight\0Minimal Light\0Forest\0Ocean\0");
+                            ApplyMenuStyle(sdk::menu_style);
+                            ImGui::EndTabItem();
                         }
                         if (ImGui::BeginTabItem("Offsets"))
                         {
-                    if (ImGui::Button("Create offsets.txt")) offsets::create_or_update_external_offsets_file();
-                    ImGui::SameLine();
-                    bool external = offsets::is_external_offsets_enabled();
-                    if (ImGui::Checkbox("Read offsets.txt", &external)) {
-                        offsets::set_external_offsets_enabled(external);
-                        sdk::request_manual_reload = true;
-                    }
-                    ImGui::EndTabItem();
+                            if (ImGui::Button("Create offsets.txt")) offsets::create_or_update_external_offsets_file();
+                            ImGui::SameLine();
+                            bool external = offsets::is_external_offsets_enabled();
+                            if (ImGui::Checkbox("Read offsets.txt", &external)) {
+                                offsets::set_external_offsets_enabled(external);
+                                sdk::request_manual_reload = true;
+                            }
+                            ImGui::EndTabItem();
                         }
                         if (ImGui::BeginTabItem("Config"))
                         {
-                    if (ImGui::Button("Export Config")) {
-                        OPENFILENAMEA ofn = { sizeof(OPENFILENAMEA) };
-                        char file[260] = "cheat_config.cfg";
-                        ofn.lpstrFile = file;
-                        ofn.nMaxFile = 260;
-                        ofn.lpstrFilter = "Config Files (*.cfg)\0*.cfg\0All Files (*.*)\0*.*\0";
-                        ofn.Flags = OFN_OVERWRITEPROMPT;
-                        if (GetSaveFileNameA(&ofn)) ExportConfig(file);
-                    }
-                    ImGui::SameLine();
-                    if (ImGui::Button("Import Config")) {
-                        OPENFILENAMEA ofn = { sizeof(OPENFILENAMEA) };
-                        char file[260] = "";
-                        ofn.lpstrFile = file;
-                        ofn.nMaxFile = 260;
-                        ofn.lpstrFilter = "Config Files (*.cfg)\0*.cfg\0All Files (*.*)\0*.*\0";
-                        ofn.Flags = OFN_FILEMUSTEXIST;
-                        if (GetOpenFileNameA(&ofn)) ImportConfig(file);
-                    }
+                            if (ImGui::Button("Export Config")) {
+                                OPENFILENAMEA ofn = { sizeof(OPENFILENAMEA) };
+                                char file[260] = "cheat_config.cfg";
+                                ofn.lpstrFile = file;
+                                ofn.nMaxFile = 260;
+                                ofn.lpstrFilter = "Config Files (*.cfg)\0*.cfg\0All Files (*.*)\0*.*\0";
+                                ofn.Flags = OFN_OVERWRITEPROMPT;
+                                if (GetSaveFileNameA(&ofn)) ExportConfig(file);
+                            }
+                            ImGui::SameLine();
+                            if (ImGui::Button("Import Config")) {
+                                OPENFILENAMEA ofn = { sizeof(OPENFILENAMEA) };
+                                char file[260] = "";
+                                ofn.lpstrFile = file;
+                                ofn.nMaxFile = 260;
+                                ofn.lpstrFilter = "Config Files (*.cfg)\0*.cfg\0All Files (*.*)\0*.*\0";
+                                ofn.Flags = OFN_FILEMUSTEXIST;
+                                if (GetOpenFileNameA(&ofn)) ImportConfig(file);
+                            }
 
-                    ImGui::Separator();
-                    if (ImGui::Button("Restart")) sdk::request_manual_reload = true;
-                    if (ImGui::Button("Close Menu")) menu_open = false;
-                    ImGui::EndTabItem();
+                            ImGui::Separator();
+                            if (ImGui::Button("Restart")) sdk::request_manual_reload = true;
+                            if (ImGui::Button("Close Menu")) menu_open = false;
+                            ImGui::EndTabItem();
                         }
                         ImGui::EndTabBar();
                     }
@@ -1357,6 +1407,7 @@ int main(int, char**)
     g_render->init();
     if (!core::Thread()) return FALSE;
 
+    projectile_esp::clear_cache();
     bool done = false;
     while (!done)
     {
@@ -1440,7 +1491,22 @@ int main(int, char**)
         g_render->draw_list() = ImGui::GetBackgroundDrawList();
         GUI::OnRender();
         GUI::update_autosave();
-        if (g_render->draw_list()) { misc::UpdateFrameSnapshot(); esp::run(); }
+        if (g_render->draw_list())
+        {
+            misc::UpdateFrameSnapshot();
+            esp::run();
+            const auto projectile_frame = misc::snapshot_frame();
+            if (sdk::projectile_esp_enabled && core::IsConnected() && projectile_frame && projectile_frame->frame.valid)
+            {
+                misc::scoped_profile_t projectile_profile(misc::prof_projectile_us);
+                projectile_esp::draw(g_render->draw_list(), projectile_frame->frame.camera_matrix,
+                    ImGui::GetIO().DisplaySize, &projectile_frame->frame.local_pos);
+            }
+            else
+                projectile_esp::clear_cache();
+        }
+        else
+            projectile_esp::clear_cache();
 
         ImGui::Render();
         const float clear_color[4] = { 0,0,0,0 };

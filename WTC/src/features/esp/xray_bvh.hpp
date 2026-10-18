@@ -371,8 +371,9 @@ namespace xray
         // --- filtrado de índices fuera de rango ---
         if (!out.indices.empty())
         {
-            std::vector<uint32_t> filtered;
-            filtered.reserve(out.indices.size());
+            // Compact in place: write never overtakes the unread triangles.
+            // Preserve order and discard incomplete trailing triples as before.
+            size_t write_index = 0;
             for (size_t i = 0; i + 2 < out.indices.size(); i += 3)
             {
                 const uint32_t a = out.indices[i];
@@ -380,12 +381,12 @@ namespace xray
                 const uint32_t c = out.indices[i + 2];
                 if (a < vert_count && b < vert_count && c < vert_count)
                 {
-                    filtered.push_back(a);
-                    filtered.push_back(b);
-                    filtered.push_back(c);
+                    out.indices[write_index++] = a;
+                    out.indices[write_index++] = b;
+                    out.indices[write_index++] = c;
                 }
             }
-            out.indices = std::move(filtered);
+            out.indices.resize(write_index);
         }
 
         return true;

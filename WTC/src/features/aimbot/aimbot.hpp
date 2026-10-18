@@ -8,14 +8,19 @@
 #undef min
 #endif
 
+#include "ground_prediction.hpp"
+
 namespace aimbot
 {
     struct AimCacheEntry
     {
         vec3_t aim_point{};
         vec3_t raw_aim_point{};
-        std::chrono::steady_clock::time_point next_update{};
         bool initialized = false;
+        bool have_motion = false;
+        uintptr_t owner = 0, movement = 0;
+        vec3_t velocity{}, acceleration{}, last_position{};
+        std::chrono::steady_clock::time_point last_seen{}, last_read{}, last_sample{}, last_solve{}, last_render{};
     };
 
     struct BallisticsData
@@ -26,6 +31,7 @@ namespace aimbot
         float length = 0.0f;
         float drag = 0.0f;
         float max_dist = 0.0f;
+        bool caliber_in_mm = false; // weapon tables convert to mm; global fallback retains meters
     };
 
     inline BallisticsData ballisticsData;
@@ -175,6 +181,7 @@ namespace aimbot
         ballisticsData.velocity = selected_info.velocity;
         ballisticsData.mass = selected_info.mass;
         ballisticsData.caliber = selected_info.caliber;
+        ballisticsData.caliber_in_mm = true;
         ballisticsData.length = selected_info.length;
         ballisticsData.drag = selected_info.drag;
         ballisticsData.max_dist = selected_info.max_dist;
@@ -243,6 +250,7 @@ namespace aimbot
                     if (found) {
                         ballisticsData.mass = best_info.mass;
                         ballisticsData.caliber = best_info.caliber;
+                        ballisticsData.caliber_in_mm = true;
                         ballisticsData.velocity = best_info.velocity;
                         ballisticsData.length = best_info.length;
                         ballisticsData.max_dist = best_info.max_dist;
@@ -256,6 +264,7 @@ namespace aimbot
         if (!found) {
             ballisticsData.mass = sdk::cGame->ballistics->getMass();
             ballisticsData.caliber = sdk::cGame->ballistics->getCaliber();
+            ballisticsData.caliber_in_mm = false;
             ballisticsData.velocity = sdk::cGame->ballistics->getVelocity();
             ballisticsData.length = sdk::cGame->ballistics->getLength();
             ballisticsData.max_dist = sdk::cGame->ballistics->getMaxDistance();
@@ -281,345 +290,94 @@ namespace aimbot
         next_update = now + std::chrono::milliseconds(50);
     }
 
-    // -----------------------------------------------------------------------
-    // Predictor balístico (sin cambios)
-    // -----------------------------------------------------------------------
-    class BallisticsPrediction {
-    private:
-        static constexpr float GRAVITY = -9.81f;
-        static constexpr float TIME_STEP = 1.0f / 96.0f;
-        static constexpr float MAX_SIMULATION_TIME = 10.0f;
-        static constexpr float CONVERGENCE_THRESHOLD = 0.01f;
-        static constexpr int MAX_ITERATIONS = 50;
-
-        float GetDragConstant(float altitude) const {
-            const float max_alt = 18300.0f;
-            const float alt_mult = 1.225f;
-            const auto clamped_alt = (std::fmin)(altitude, max_alt);
-
-            const float c1 = 2.2871901e-19f;
-            const float c2 = 5.8355603e-14f;
-            const float c3 = 0.00000000353118f;
-            const float c4 = 0.000095938703f;
-
-            return alt_mult *
-                ((max_alt / (std::fmax)(altitude, max_alt)) *
-                    ((((((c1 * clamped_alt) - c2) * clamped_alt) + c3) *
-                        clamped_alt) -
-                        c4) *
-                    clamped_alt +
-                    1.0f);
-        }
-
-        float GetMachDragFactor(float speed, float altitude) const {
-            (void)altitude;
-            if (speed <= 0.01f) return 1.0f;
-
-            const float speed_of_sound = 343.0f;
-            const float mach = speed / speed_of_sound;
-
-            if (mach < 0.80f) return 1.00f;
-            if (mach < 1.20f) {
-                const float t = (mach - 0.80f) / 0.40f;
-                return 1.0f + 1.8f * t;
-            }
-            return 2.80f / std::sqrt(mach);
-        }
-
-        float GetBallisticCoefficientAtSpeed(float speed, const BallisticsData& data,
-            float dragConstant, float altitude) const {
-            if (data.drag != 0.0f) {
-                const float mach_factor = GetMachDragFactor(speed, altitude);
-                return -1.0f * (dragConstant * (data.drag * mach_factor)) / data.mass;
-            }
-
-            return -1.0f * (dragConstant * static_cast<float>(M_PI) * 0.5f *
-                std::pow(data.caliber * 0.5f, 2.0f) * data.length) / data.mass;
-        }
-
-        float GetBallisticCoefficient(const BallisticsData& data, float dragConstant) const {
-            return GetBallisticCoefficientAtSpeed(data.velocity, data, dragConstant, 0.0f);
-        }
-
-        void ApplyPhysics(vec3_t& position, vec3_t& velocity, const BallisticsData& data,
-            float dragConstant, float deltaTime) const {
-            float speed = velocity.length();
-            if (speed > 0.01f) {
-                const float ballistic_coeff =
-                    GetBallisticCoefficientAtSpeed(speed, data, dragConstant, position.y);
-
-                const float drag_force = ballistic_coeff * speed * speed;
-                const vec3_t normalized_vel = velocity.normalized();
-                const vec3_t drag_acceleration = normalized_vel * (-drag_force);
-
-                velocity = velocity + drag_acceleration * deltaTime;
-            }
-
-            velocity.y += GRAVITY * deltaTime;
-            position = position + velocity * deltaTime;
-        }
-
-        bool SimulateTrajectory(vec3_t start_pos, vec3_t initial_velocity, vec3_t target_pos,
-            const BallisticsData& data, float drag_constant, float max_time,
-            vec3_t& hit_point, float& hit_time) const {
-            vec3_t pos = start_pos;
-            vec3_t vel = initial_velocity;
-            float time = 0.0f;
-            vec3_t last_pos = pos;
-
-            while (time < max_time) {
-                last_pos = pos;
-                ApplyPhysics(pos, vel, data, drag_constant, TIME_STEP);
-                time += TIME_STEP;
-
-                const vec3_t to_target = target_pos - start_pos;
-                const vec3_t to_current = pos - start_pos;
-
-                const float target_dist_2d =
-                    std::sqrt(to_target.x * to_target.x + to_target.z * to_target.z);
-                const float current_dist_2d =
-                    std::sqrt(to_current.x * to_current.x + to_current.z * to_current.z);
-
-                if (current_dist_2d >= target_dist_2d) {
-                    const float last_dist_2d =
-                        std::sqrt((last_pos - start_pos).x * (last_pos - start_pos).x +
-                            (last_pos - start_pos).z * (last_pos - start_pos).z);
-
-                    const float alpha =
-                        (target_dist_2d - last_dist_2d) /
-                        std::max(0.0001f, current_dist_2d - last_dist_2d);
-
-                    hit_point = last_pos + (pos - last_pos) * alpha;
-                    hit_time = time - TIME_STEP + TIME_STEP * alpha;
-                    return true;
-                }
-
-                if (pos.y < (std::fmin)(start_pos.y - 1000.0f, target_pos.y - 100.0f))
-                    break;
-            }
-
-            hit_point = pos;
-            hit_time = time;
-            return false;
-        }
-
-        vec3_t PredictTargetPosition(const vec3_t& target_pos, const vec3_t& target_vel,
-            const vec3_t& target_accel, float time,
-            float turn_rate, bool use_turn) const {
-            if (!use_turn || std::abs(turn_rate) < 0.0001f) {
-                return target_pos + target_vel * time +
-                    target_accel * (0.5f * time * time);
-            }
-
-            const int steps = (std::max)(1, static_cast<int>(time / 0.05f));
-            const float dt = time / static_cast<float>(steps);
-
-            vec3_t pos = target_pos;
-            vec3_t vel = target_vel;
-
-            for (int i = 0; i < steps; ++i) {
-                pos = pos + vel * dt + target_accel * (0.5f * dt * dt);
-
-                const float angle = turn_rate * dt;
-                const float c = std::cos(angle);
-                const float s = std::sin(angle);
-
-                const float vx = vel.x * c - vel.z * s;
-                const float vz = vel.x * s + vel.z * c;
-                vel = { vx, vel.y, vz };
-            }
-
-            return pos;
-        }
-
-        float ComputeTurnRate(const vec3_t& velocity, const vec3_t& acceleration) const {
-            const float speed = velocity.length();
-            if (speed < 1.0f) return 0.0f;
-
-            const vec3_t vn = velocity / speed;
-            const float dot = vn.x * acceleration.x + vn.y * acceleration.y + vn.z * acceleration.z;
-            const vec3_t perp = acceleration - vn * dot;
-
-            const float horizontal_speed =
-                std::sqrt(velocity.x * velocity.x + velocity.z * velocity.z);
-            if (horizontal_speed < 1.0f || perp.length() < 0.1f) return 0.0f;
-
-            const float cross_y = vn.x * perp.z - vn.z * perp.x;
-            return cross_y / (horizontal_speed * horizontal_speed);
-        }
-
-    public:
-        vec3_t PredictInterceptPoint(vec3_t shooter_pos, vec3_t target_pos, vec3_t target_velocity,
-            const BallisticsData& ballistics,
-            vec3_t target_acceleration = vec3_t{},
-            bool use_turn = false) const {
-            if (ballistics.velocity <= 0.0f) return target_pos;
-
-            const float altitude = (std::max)(shooter_pos.y, target_pos.y);
-            const float drag_constant = GetDragConstant(altitude);
-
-            const float turn_rate =
-                use_turn ? ComputeTurnRate(target_velocity, target_acceleration) : 0.0f;
-
-            vec3_t predicted_target_pos = target_pos;
-
-            for (int iteration = 0; iteration < MAX_ITERATIONS; ++iteration) {
-                const vec3_t direction = (predicted_target_pos - shooter_pos).normalized();
-                const vec3_t initial_velocity = direction * ballistics.velocity;
-
-                vec3_t hit_point;
-                float hit_time;
-
-                if (SimulateTrajectory(shooter_pos, initial_velocity, predicted_target_pos,
-                    ballistics, drag_constant, MAX_SIMULATION_TIME,
-                    hit_point, hit_time)) {
-                    const vec3_t new_prediction =
-                        PredictTargetPosition(target_pos, target_velocity, target_acceleration,
-                            hit_time, turn_rate, use_turn);
-
-                    const float prediction_error = (new_prediction - predicted_target_pos).length();
-                    if (prediction_error < CONVERGENCE_THRESHOLD) {
-                        return new_prediction;
-                    }
-
-                    const float drop = 0.5f * std::abs(GRAVITY) * hit_time * hit_time;
-                    predicted_target_pos = new_prediction;
-                    predicted_target_pos.y += drop;
-                }
-                else {
-                    const float estimated_time = shooter_pos.dist_to(predicted_target_pos) / ballistics.velocity;
-                    predicted_target_pos =
-                        PredictTargetPosition(target_pos, target_velocity, target_acceleration,
-                            estimated_time, turn_rate, use_turn);
-                    break;
-                }
-            }
-
-            return predicted_target_pos;
-        }
-
-        float CalculateOptimalAngle(vec3_t shooter_pos, vec3_t target_pos, float muzzle_velocity,
-            const BallisticsData& ballistics) const {
-            vec3_t displacement = target_pos - shooter_pos;
-            float horizontal_dist = std::sqrt(displacement.x * displacement.x + displacement.z * displacement.z);
-            float vertical_dist = displacement.y;
-
-            float altitude = (std::max)(shooter_pos.y, target_pos.y);
-            float drag_constant = GetDragConstant(altitude);
-
-            float low_angle = -M_PI / 6.0f;
-            float high_angle = M_PI / 3.0f;
-            float best_angle = 0.0f;
-            float min_error = FLT_MAX;
-
-            for (int i = 0; i < 30; ++i) {
-                const float test_angle = (low_angle + high_angle) * 0.5f;
-
-                vec3_t direction = vec3_t(
-                    horizontal_dist > 0.0f ? displacement.x / horizontal_dist : 1.0f,
-                    std::sin(test_angle),
-                    horizontal_dist > 0.0f ? displacement.z / horizontal_dist : 0.0f
-                ).normalized();
-
-                vec3_t initial_velocity = direction * muzzle_velocity;
-                vec3_t hit_point;
-                float hit_time;
-
-                if (SimulateTrajectory(shooter_pos, initial_velocity, target_pos,
-                    ballistics, drag_constant, MAX_SIMULATION_TIME,
-                    hit_point, hit_time)) {
-                    const float error = (hit_point - target_pos).length();
-                    if (error < min_error) {
-                        min_error = error;
-                        best_angle = test_angle;
-                    }
-
-                    if (hit_point.y > target_pos.y) high_angle = test_angle;
-                    else low_angle = test_angle;
-                }
-                else {
-                    high_angle = test_angle;
-                }
-            }
-
-            return best_angle;
-        }
-
-        vec3_t GetAimPoint(vec3_t shooter_pos, vec3_t target_pos,
-            const BallisticsData& ballistics) const {
-            vec3_t direction = target_pos - shooter_pos;
-            const float distance = direction.length();
-            direction.normalized();
-
-            const float altitude = (std::max)(shooter_pos.y, target_pos.y);
-            const float drag_constant = GetDragConstant(altitude);
-            const float ballistic_coeff = GetBallisticCoefficient(ballistics, drag_constant);
-
-            const float flight_time = distance / ballistics.velocity;
-            const float drop = 0.5f * std::abs(GRAVITY) * flight_time * flight_time;
-            const float drag_effect = ballistic_coeff * distance * 0.1f;
-
-            vec3_t aim_point = target_pos;
-            aim_point.y += drop + drag_effect;
-            return aim_point;
-        }
-    };
-
-    // -----------------------------------------------------------------------
-    // run() para aimbot terrestre (sin cambios)
-    // -----------------------------------------------------------------------
-    inline auto run(c_unit& unit, vec3_t unit_position, vec3_t local_position, ViewMatrix_t camera_matrix) -> void {
-        static BallisticsPrediction pred;
-        static std::unordered_map<uintptr_t, AimCacheEntry> aim_cache;
-        constexpr float smooth_alpha = 0.30f;
-
+    // Only the selected ground target reaches this path: one fixed-size cache.
+    // Solving and DMA are paced independently of rendering (60/120 ms).
+    inline auto run(c_unit& unit, vec3_t unit_position, vec3_t local_position,
+        ViewMatrix_t camera_matrix, std::chrono::steady_clock::time_point captured_at) -> void {
+        static AimCacheEntry cache{};
+        static std::chrono::steady_clock::time_point next_work{}; // survives target switches
         const auto now = std::chrono::steady_clock::now();
-        const uintptr_t unit_base = unit.get_base();
-        auto& cache = aim_cache[unit_base];
-
-        vec3_t targetVelocity = unit.get_movement_ground().velocity();
-        const float targetSpeed = targetVelocity.length();
-
-        if (now >= cache.next_update)
-        {
-            float horizontalDist = std::sqrt(
-                (unit_position.x - local_position.x) * (unit_position.x - local_position.x) +
-                (unit_position.z - local_position.z) * (unit_position.z - local_position.z)
-            );
-
-            float distanceFactor = horizontalDist / 150.0f;
-            float extraOffset = distanceFactor * 0.143f;
-
-            vec3_t adjusted_position = unit_position;
-            adjusted_position.y += 1.0f + extraOffset;
-
-            if (targetSpeed > 0.1f)
-                cache.raw_aim_point = pred.PredictInterceptPoint(local_position, adjusted_position, targetVelocity, ballisticsData);
-            else
-                cache.raw_aim_point = pred.GetAimPoint(local_position, adjusted_position, ballisticsData);
-
-            if (!cache.initialized)
-            {
-                cache.aim_point = cache.raw_aim_point;
+        const auto base = unit.get_base();
+        if (cache.owner != base || now-cache.last_seen > std::chrono::milliseconds(500)) {
+            cache = {};
+            cache.owner = base;
+        }
+        cache.last_seen = now;
+        if (!ground_prediction::finite(unit_position) || !ground_prediction::finite(local_position)) return;
+        const float sample_age = std::chrono::duration<float>(now-captured_at).count();
+        if (sample_age < 0 || sample_age > 0.25f) { cache.initialized = false; return; }
+        // Cheap discontinuity check on every frame, before reusing a previous marker.
+        const float position_dt = std::chrono::duration<float>(captured_at-cache.last_sample).count();
+        if (cache.have_motion && (position_dt < 0 ||
+            (unit_position-cache.last_position).length() > 5.0f + cache.velocity.length()*std::max(0.0f,position_dt)*2.0f)) {
+            cache.have_motion = false;
+            cache.initialized = false;
+            cache.acceleration = {};
+        }
+        if (now >= next_work) {
+            next_work = now + std::chrono::milliseconds(60); // throttle failures and target switches too
+            uintptr_t movement = 0;
+            vec3_t velocity{};
+            if (!TargetProcess->Read(base + offsets::unit_offsets::groundmovement_offset, &movement, sizeof(movement))
+                || !movement || !TargetProcess->Read(movement + 0x5C, &velocity, sizeof(velocity))
+                || !ground_prediction::finite(velocity) || velocity.length() > 150.0f) {
+                cache.initialized = false;
+                cache.have_motion = false;
+                return;
+            }
+            const float dt = std::chrono::duration<float>(now-cache.last_read).count();
+            if (cache.movement != movement) {
+                cache.have_motion = false;
+                cache.initialized = false;
+            }
+            if (cache.have_motion && dt >= 0.025f && dt <= 0.3f) {
+                vec3_t measured = (velocity-cache.velocity)/dt;
+                measured.y = 0;
+                if (ground_prediction::finite(measured) && measured.length() < 25.0f) {
+                    const float alpha = 1.0f-std::exp(-dt/0.18f);
+                    cache.acceleration += (measured-cache.acceleration)*alpha;
+                } else cache.acceleration = {};
+            } else cache.acceleration = {};
+            cache.movement = movement;
+            cache.velocity = velocity;
+            cache.last_read = now;
+            cache.last_sample = captured_at;
+            cache.last_position = unit_position;
+            cache.have_motion = true;
+            const float speed = velocity.length();
+            const vec3_t historical_acceleration = cache.acceleration;
+            if (speed < 0.2f) cache.acceleration = {};
+            next_work = now + std::chrono::milliseconds(speed > 0.1f ? 60 : 120);
+            // Preserve existing marker height; ballistic drop is handled only by the solver.
+            const float dx = unit_position.x-local_position.x, dz = unit_position.z-local_position.z;
+            vec3_t target = ground_prediction::align_position(unit_position,velocity,historical_acceleration,sample_age);
+            target.y += 1.0f + std::sqrt(dx*dx+dz*dz)*(0.143f/150.0f);
+            const ground_prediction::Ballistics b{ballisticsData.velocity, ballisticsData.mass,
+                ballisticsData.caliber * (ballisticsData.caliber_in_mm ? 0.001f : 1.0f),
+                ballisticsData.length, ballisticsData.drag};
+            const auto solution = ground_prediction::solve(local_position,target,velocity,cache.acceleration,b);
+            if (!solution.valid) { cache.initialized = false; return; }
+            cache.raw_aim_point = solution.point;
+            cache.last_solve = now;
+            if (!cache.initialized) {
+                cache.aim_point = solution.point;
+                cache.last_render = now;
                 cache.initialized = true;
             }
-
-            cache.next_update = now + (targetSpeed > 0.1f ? std::chrono::milliseconds(60) : std::chrono::milliseconds(120));
         }
-
-        if (cache.initialized)
-            cache.aim_point = cache.aim_point + (cache.raw_aim_point - cache.aim_point) * smooth_alpha;
-
-        const vec3_t& aimPoint = cache.aim_point;
-
+        if (!cache.initialized) return;
+        const float render_dt = std::clamp(std::chrono::duration<float>(now-cache.last_render).count(),0.0f,0.1f);
+        const float raw_age = std::clamp(std::chrono::duration<float>(now-cache.last_solve).count(),0.0f,0.15f);
+        cache.last_render = now;
+        const vec3_t live = cache.raw_aim_point + cache.velocity*raw_age;
+        // Time-invariant smoothing with velocity feed-forward, not a frame-dependent lag.
+        cache.aim_point += cache.velocity*render_dt;
+        cache.aim_point += (live-cache.aim_point)*(1.0f-std::exp(-render_dt/0.045f));
         vec2_t screen;
-        if (!g_render->world_to_screen(aimPoint, screen, camera_matrix))
-            return;
-
-        g_render->circle_filled(screen.x, screen.y, 3.0f, IM_COL32(255, 0, 0, 255), 20);
-
+        if (!g_render->world_to_screen(cache.aim_point,screen,camera_matrix)) return;
+        g_render->circle_filled(screen.x,screen.y,3.0f,IM_COL32(255,0,0,255),20);
         vec2_t unitScreen;
-        if (g_render->world_to_screen(unit_position, unitScreen, camera_matrix))
-            g_render->line(unitScreen.x, unitScreen.y, screen.x, screen.y, IM_COL32(255, 0, 0, 24), 1.0f);
+        if (g_render->world_to_screen(unit_position,unitScreen,camera_matrix))
+            g_render->line(unitScreen.x,unitScreen.y,screen.x,screen.y,IM_COL32(255,0,0,24),1.0f);
     }
 }

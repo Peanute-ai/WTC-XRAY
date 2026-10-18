@@ -100,6 +100,15 @@ public:
 	*/
 	VMMDLL_PROCESS_INFORMATION GetProcessInformation();
 
+	/**
+	* brief Gets the PID of the currently attached process (0 when not attached)
+	* @return the process id
+	*/
+	int GetProcessID() const
+	{
+		return current_process.PID;
+	}
+
 
 	/**
 	* brief Gets the base address of the process

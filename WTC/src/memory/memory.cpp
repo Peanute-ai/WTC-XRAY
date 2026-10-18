@@ -750,12 +750,19 @@ bool c_memory::Write(uintptr_t address, void* buffer, size_t size, int pid) cons
 
 bool c_memory::Read(uintptr_t address, void* buffer, size_t size) const
 {
-	if ( !is_valid_user_address( address ) || !buffer || size == 0 )
+	constexpr uintptr_t user_limit = 0x7FFFFFFFFFFF;
+	if (address < 0x10000 || address >= user_limit ||
+		!buffer || size == 0 || size > MAXDWORD)
+		return false;
+	if (size > user_limit - address)
 		return false;
 
-	if ( !VMMDLL_MemReadEx( this->vHandle, this->current_process.PID, address, ( PBYTE )buffer, size, NULL, VMMDLL_FLAG_NOCACHE ) )
+	DWORD bytes_read = 0;
+	if (!VMMDLL_MemReadEx(this->vHandle, this->current_process.PID, address,
+		static_cast<PBYTE>(buffer), static_cast<DWORD>(size), &bytes_read, VMMDLL_FLAG_NOCACHE) ||
+		bytes_read != size)
 	{
-		if ( should_log_transient_failure() )
+		if (should_log_transient_failure())
 			LOG("[!] Failed to read Memory at 0x%zx\n", address);
 		return false;
 	}

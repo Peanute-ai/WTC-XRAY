@@ -220,7 +220,7 @@ preset2_monitor_index=0
     struct int_binding_t { const char* key; int* value; int min_value; int max_value; };
     struct color_binding_t { const char* key; ImVec4* value; };
 
-    inline const std::array<bool_binding_t, 25> bool_bindings = {{
+    inline const std::array<bool_binding_t, 26> bool_bindings = {{
         { "esp_enabled", &sdk::esp_enabled },
         { "radar_enabled", &sdk::radar_enabled },
         { "aimbot_enabled", &sdk::aimbot_enabled },
@@ -231,6 +231,7 @@ preset2_monitor_index=0
         { "esp_show_reload", &sdk::esp_show_reload },
         { "esp_show_reload_seconds", &sdk::esp_show_reload_seconds },
         { "esp_show_fps", &sdk::esp_show_fps },
+        { "esp_only_show_planes", &sdk::esp_only_show_planes },
         { "esp_vsync_enabled", &sdk::esp_vsync_enabled },
         { "auto_fullscreen_on_start", &sdk::auto_fullscreen_on_start },
         { "show_helicopter", &sdk::show_helicopter },

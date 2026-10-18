@@ -31,11 +31,11 @@ public:
     }
 
     auto velocity() -> vec3d_t {
-        return TargetProcess->Read<vec3d_t>(this->container_address + 0x15B8);
+        return TargetProcess->Read<vec3d_t>(this->container_address + offsets::unit_offsets::airmovement_offsets::velocity_offset);
     }
 
     auto acceleration() -> vec3d_t {
-        return TargetProcess->Read<vec3d_t>(this->container_address + 0x15D0);
+        return TargetProcess->Read<vec3d_t>(this->container_address + offsets::unit_offsets::airmovement_offsets::acceleration_offset);
     }
 
 private:

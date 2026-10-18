@@ -1,3 +1,9 @@
+# Local publishing clone and obsolete diagnostic workspace
+/.gh-publish/
+/.projectile-check/
+/.optimization-backup/
+/build/
+
 # Local IDE state and build output
 .vs/
 .vscode/
@@ -19,6 +25,9 @@
 *.dll
 *.lib
 *.log
+*.rar
+*.zip
+*.7z
 
 # External SDK: obtain separately; do not commit vendor files
 /WTC/lib/dma/*

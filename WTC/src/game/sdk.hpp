@@ -62,6 +62,16 @@ namespace sdk
 	inline int   esp_vsync_fps = 120;
 	inline float esp_font_scale = 1.0f;
 	inline bool  esp_show_bomb_impact = true;
+	inline bool  esp_only_show_planes = false; // Oculta todo lo que no sea aereo (terrestre, naval, estructuras).
+
+	inline bool projectile_esp_enabled = false;
+	inline bool projectile_debug = false;
+	inline bool  projectile_incoming_only = false;
+	inline bool  projectile_incoming_use_localplayer = true; // usa el jugador local confirmado del snapshot
+	inline bool  projectile_aam_only = true; // dibuja solo misiles aire-aire (filtra AGM, bombas, cohetes y bengalas)
+	inline float projectile_incoming_distance = 3000.0f;
+	inline float projectile_incoming_angle = 30.0f;
+	inline int projectile_scan_budget = 4096;
 
 	// Filtros de vehículos
 	inline bool show_helicopter = true;

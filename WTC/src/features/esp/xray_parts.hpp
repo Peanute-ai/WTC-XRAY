@@ -41,15 +41,13 @@ namespace xray
             name.find("_crew_dm") != std::string_view::npos ||
             name.find("crewman") != std::string_view::npos)
             return K::Crew;
-        if (name.find("fuel_tank") != std::string_view::npos ||
-            name.find("fuel_") != std::string_view::npos)
+        // "fuel_" also covers "fuel_tank"; avoid a redundant scan.
+        if (name.find("fuel_") != std::string_view::npos)
             return K::Fuel;
-        if (name.find("ammo_rack") != std::string_view::npos ||
+        // "ammo_" covers all ammo-specific names previously checked here.
+        if (name.find("ammo_") != std::string_view::npos ||
             name.find("shell_rack") != std::string_view::npos ||
-            name.find("shell_storage") != std::string_view::npos ||
-            name.find("ammo_storage") != std::string_view::npos ||
-            name.find("ammo_belt_dm") != std::string_view::npos ||
-            name.find("ammo_") != std::string_view::npos)
+            name.find("shell_storage") != std::string_view::npos)
             return K::Ammo;
         if (name.find("transmission") != std::string_view::npos ||
             name.find("gearbox") != std::string_view::npos ||

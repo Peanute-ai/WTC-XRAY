@@ -168,7 +168,10 @@
     <ClInclude Include="src\core\config.hpp" />
     <ClInclude Include="src\core\core.hpp" />
     <ClInclude Include="src\features\aimbot\aimbot.hpp" />
+    <ClInclude Include="src/features/aimbot/ground_prediction.hpp" />
     <ClInclude Include="src\features\esp\esp.hpp" />
+    <ClInclude Include="src\features\esp\projectile_ecs.hpp" />
+    <ClInclude Include="src\features\esp\projectile_esp.hpp" />
     <ClInclude Include="src\features\misc\misc.hpp" />
     <ClInclude Include="src\game\classes\ballistic.hpp" />
     <ClInclude Include="src\game\classes\camera.hpp" />

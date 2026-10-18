@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include "..\\..\\core\\runtime_context.hpp"
 #include <shared_mutex>
 #include <atomic>
@@ -48,6 +48,7 @@ namespace misc
 	inline std::atomic<uint64_t> prof_update_fast_us{ 0 };
 	inline std::atomic<uint64_t> prof_update_frame_us{ 0 };
 	inline std::atomic<uint64_t> prof_esp_us{ 0 };
+	inline std::atomic<uint64_t> prof_projectile_us{ 0 };
 	inline std::atomic<uint64_t> prof_aimbot_us{ 0 };
 	inline std::atomic<uint64_t> prof_main_frame_us{ 0 };
 	inline std::atomic<uint64_t> prof_snapshot_age_us{ 0 };
